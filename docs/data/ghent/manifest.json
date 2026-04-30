@@ -1,0 +1,30 @@
+{
+  "subjects": [
+    "2018_001",
+    "2019_001",
+    "2019_003",
+    "2019_004",
+    "2019_007",
+    "2020_001",
+    "2020_002",
+    "2020_004",
+    "2020_005",
+    "2020_006",
+    "2021_001",
+    "2021_002",
+    "2021_005-1",
+    "2021_006",
+    "2021_007",
+    "2021_008-1"
+  ],
+  "models": [
+    "CORTEG (LoRA + adapter) \u2b50",
+    "CORTEG (LoRA, no adapter)",
+    "CORTEG (full FT)",
+    "CORTEG (random init)",
+    "Per-subject pretrained",
+    "Per-subject random init",
+    "Ridge (classical)",
+    "PLS (classical)"
+  ]
+}

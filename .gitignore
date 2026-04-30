@@ -1,0 +1,12 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (only used by build_demo_data.py)
+__pycache__/
+*.pyc
+.venv/
+
+# Editors
+.idea/
+.vscode/

@@ -1,0 +1,940 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>CORTEG — ECoG Foundation Model Demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.164.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.164.0/examples/jsm/"
+        }
+      }
+    </script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background: #fafbfc;
+        color: #24292f;
+      }
+      h1 {
+        margin: 0 0 4px 0;
+        font-size: 24px;
+      }
+      .subtitle {
+        color: #57606a;
+        font-size: 14px;
+        margin-bottom: 18px;
+      }
+      .controls {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+        padding: 12px;
+        background: white;
+        border: 1px solid #d0d7de;
+        border-radius: 8px;
+      }
+      .controls label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        color: #57606a;
+        font-weight: 600;
+      }
+      .controls select,
+      .controls input[type="range"] {
+        padding: 6px 8px;
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+        font-size: 14px;
+        min-width: 180px;
+      }
+      .controls .play-btn {
+        padding: 6px 14px;
+        background: #2da44e;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .controls .play-btn:hover {
+        background: #2c974b;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 18px;
+      }
+      @media (max-width: 1100px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .card {
+        background: white;
+        border: 1px solid #d0d7de;
+        border-radius: 8px;
+        padding: 14px;
+      }
+      .card h3 {
+        margin: 0 0 10px 0;
+        font-size: 14px;
+        color: #24292f;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .card h3 .badge {
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+      }
+      .badge-true {
+        background: #dafbe1;
+        color: #1a7f37;
+      }
+      .badge-pred {
+        background: #ddf4ff;
+        color: #0969da;
+      }
+      .canvas-wrap {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        border-radius: 6px;
+        overflow: hidden;
+        background: linear-gradient(180deg, #f6f8fa 0%, #e7ecef 100%);
+      }
+      .canvas-wrap canvas {
+        width: 100% !important;
+        height: 100% !important;
+        display: block;
+      }
+      .canvas-wrap .loading {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #57606a;
+        font-size: 12px;
+        pointer-events: none;
+      }
+      .right-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .right-stack .card {
+        padding: 10px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .metric {
+        text-align: center;
+        padding: 8px;
+        border-radius: 6px;
+        background: #f6f8fa;
+        font-size: 12px;
+      }
+      .metric .value {
+        font-size: 16px;
+        font-weight: 700;
+        color: #0969da;
+      }
+      .metric .label {
+        color: #57606a;
+      }
+      .summary {
+        margin-top: 18px;
+        padding: 12px;
+        background: white;
+        border: 1px solid #d0d7de;
+        border-radius: 8px;
+        font-size: 13px;
+        color: #57606a;
+      }
+      .summary b {
+        color: #24292f;
+      }
+      #plot {
+        width: 100%;
+        height: 380px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>CORTEG — Cross-Modal Transfer to ECoG Decoding</h1>
+    <div class="subtitle" id="subtitle">
+      Interactive demo: live finger decoding with side-by-side ground-truth vs
+      predicted hand animation.
+    </div>
+
+    <div class="controls">
+      <label
+        >Dataset
+        <select id="dataset">
+          <option value="stanford" selected>Stanford (finger movement)</option>
+          <option value="ghent">Ghent (speech envelope)</option>
+        </select>
+      </label>
+      <label
+        >Subject
+        <select id="subject"></select>
+      </label>
+      <label
+        >Model
+        <select id="model"></select>
+      </label>
+      <label
+        >Finger to highlight
+        <select id="finger"></select>
+      </label>
+      <label
+        >Smoothing
+        <select id="smoothing">
+          <option value="1">Off</option>
+          <option value="5">Light (5)</option>
+          <option value="11" selected>Medium (11)</option>
+          <option value="21">Heavy (21)</option>
+        </select>
+      </label>
+      <label
+        >Playback
+        <button class="play-btn" id="playbtn">▶ Play</button>
+      </label>
+      <label style="flex: 1; min-width: 220px"
+        >Time
+        <input
+          type="range"
+          id="timeSlider"
+          min="0"
+          max="999"
+          value="0"
+          step="1"
+          style="width: 100%"
+        />
+      </label>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Predicted vs Ground-Truth Finger Flexion (over time)</h3>
+        <div id="plot"></div>
+        <div class="metrics" id="metrics"></div>
+      </div>
+      <div class="right-stack">
+        <div class="card">
+          <h3>Ground Truth <span class="badge badge-true">recorded</span></h3>
+          <div class="canvas-wrap">
+            <canvas id="canvas-true"></canvas>
+            <div class="loading" id="loading-true">loading 3D hand…</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>
+            Model Prediction
+            <span class="badge badge-pred" id="pred-badge">CORTEG</span>
+          </h3>
+          <div class="canvas-wrap">
+            <canvas id="canvas-pred"></canvas>
+            <div class="loading" id="loading-pred">loading 3D hand…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="summary" id="summary"></div>
+
+    <script type="module">
+      import * as THREE from "three";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      // ─── Free hand mesh: Meta/Oculus generic hand from immersive-web/webxr-input-profiles
+      // Public, MIT-licensed, available via jsdelivr CDN.
+      const HAND_GLB_URL =
+        "https://cdn.jsdelivr.net/gh/immersive-web/webxr-input-profiles@main/packages/assets/profiles/generic-hand/right.glb";
+
+      // Bone names in the WebXR generic-hand glb use XR_HAND joint conventions
+      const FINGER_BONE_PATTERNS = [
+        ["thumb-phalanx-proximal", "thumb-phalanx-distal"],
+        [
+          "index-finger-phalanx-proximal",
+          "index-finger-phalanx-intermediate",
+          "index-finger-phalanx-distal",
+        ],
+        [
+          "middle-finger-phalanx-proximal",
+          "middle-finger-phalanx-intermediate",
+          "middle-finger-phalanx-distal",
+        ],
+        [
+          "ring-finger-phalanx-proximal",
+          "ring-finger-phalanx-intermediate",
+          "ring-finger-phalanx-distal",
+        ],
+        [
+          "pinky-finger-phalanx-proximal",
+          "pinky-finger-phalanx-intermediate",
+          "pinky-finger-phalanx-distal",
+        ],
+      ];
+
+      const FINGER_NAMES = ["Thumb", "Index", "Middle", "Ring", "Pinky"];
+
+      const state = {
+        dataset: "stanford", // "stanford" or "ghent"
+        subject: null,
+        model: null,
+        finger: 0,
+        smoothing: 11,
+        data: null,
+        manifest: null,
+        yt_smooth: null,
+        yp_smooth: null,
+        t: 0,
+        T: 1000,
+        playing: false,
+        timer: null,
+      };
+
+      // Adjust 1D arrays (Ghent envelope) to a 2D-array shape (T,1) so that
+      // movingAverage and downstream code can treat them uniformly.
+      function ensure2D(arr) {
+        if (!arr.length) return arr;
+        return Array.isArray(arr[0]) ? arr : arr.map((v) => [v]);
+      }
+
+      // ─── Smoothing: centered moving average (causal-padded) ───
+      function movingAverage(arr, window) {
+        if (window <= 1) return arr.map((r) => r.slice());
+        const T = arr.length,
+          F = arr[0].length,
+          half = Math.floor(window / 2);
+        const out = [];
+        for (let t = 0; t < T; t++) {
+          const lo = Math.max(0, t - half),
+            hi = Math.min(T, t + half + 1);
+          const sum = new Array(F).fill(0);
+          for (let i = lo; i < hi; i++)
+            for (let f = 0; f < F; f++) sum[f] += arr[i][f];
+          out.push(sum.map((v) => v / (hi - lo)));
+        }
+        return out;
+      }
+
+      // ─── Build a hand scene that loads the GLB ───
+      async function makeHandScene(canvas, loadingEl) {
+        const renderer = new THREE.WebGLRenderer({
+          canvas,
+          antialias: true,
+          alpha: true,
+        });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 100);
+        camera.position.set(0.0, 0.3, 2.2);
+        camera.lookAt(0, 0, 0);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+        const key = new THREE.DirectionalLight(0xfff5e8, 1.2);
+        key.position.set(0.4, 0.6, 0.5);
+        key.castShadow = true;
+        key.shadow.mapSize.set(1024, 1024);
+        scene.add(key);
+        const rim = new THREE.DirectionalLight(0xa0c0ff, 0.5);
+        rim.position.set(-0.5, 0.2, -0.4);
+        scene.add(rim);
+
+        // Subtle ground for shadow
+        const ground = new THREE.Mesh(
+          new THREE.PlaneGeometry(6, 6),
+          new THREE.ShadowMaterial({ opacity: 0.18 }),
+        );
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -0.7;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Build procedural hand directly (GLB approach had bind-pose orientation issues).
+        // Bones are clean +Y-aligned, so X-axis rotation gives perfect finger curl.
+        let bones = [];
+        let restRot = [];
+        let handRoot = makeProceduralHand();
+        scene.add(handRoot);
+        bones = handRoot.userData.fingerBones;
+        restRot = bones.map((chain) => chain.map((b) => b.rotation.clone()));
+        if (loadingEl) loadingEl.style.display = "none";
+
+        const ctrl = new OrbitControls(camera, canvas);
+        ctrl.target.set(0, 0.2, 0);
+        ctrl.enablePan = false;
+        ctrl.minDistance = 1.2;
+        ctrl.maxDistance = 4.0;
+
+        function resize() {
+          const r = canvas.getBoundingClientRect();
+          renderer.setSize(r.width, r.height, false);
+          camera.aspect = r.width / r.height;
+          camera.updateProjectionMatrix();
+        }
+        resize();
+        window.addEventListener("resize", resize);
+
+        // WebXR generic-hand bones: per spec +X = dorsal (palm normal),
+        // +Y = along bone, +Z = lateral. Curl is rotation around X (dorsal axis).
+        // Symptom of wrong axis: width distortion = rotating around bone-Y.
+        const isProceduralHand = !!handRoot.userData.fingerBones;
+        const CURL_AXIS = "x";
+
+        function setFingerFlex(idx, flex, isHi) {
+          const chain = bones[idx];
+          const rest = restRot[idx];
+          if (!chain || chain.length === 0) return;
+          // Map flexion from z-scored (-2..3) → curl factor (0..1)
+          const norm = Math.max(0, Math.min(1, (flex + 2) / 5));
+          // Per-joint multipliers (more bend toward distal)
+          const mult = [0.85, 1.05, 1.15];
+          chain.forEach((bone, i) => {
+            if (!bone) return;
+            const target = norm * 1.45 * (mult[i] || 1.0);
+            // Sign: empirical — negative curls in toward palm for both rigs
+            const sign = -1;
+            const restEuler = rest[i];
+            const cur = bone.rotation[CURL_AXIS];
+            const tgt = restEuler[CURL_AXIS] + sign * target;
+            // Smooth approach
+            bone.rotation[CURL_AXIS] = cur + (tgt - cur) * 0.35;
+          });
+        }
+
+        function render() {
+          renderer.render(scene, camera);
+        }
+
+        return { setFingerFlex, render, resize };
+      }
+
+      // ─── Procedural fallback (minimal) ───
+      function makeProceduralHand() {
+        // Anatomical procedural hand. All bones are +Y-aligned in their local frame,
+        // so rotating around X bends cleanly toward the palm (no width artifacts).
+        const g = new THREE.Group();
+        const skin = new THREE.MeshPhysicalMaterial({
+          color: 0xe6a886,
+          roughness: 0.62,
+          clearcoat: 0.18,
+          clearcoatRoughness: 0.45,
+          sheen: 0.18,
+          sheenColor: 0xffd9b3,
+        });
+        const nailMat = new THREE.MeshPhysicalMaterial({
+          color: 0xf5e1d3,
+          roughness: 0.3,
+          clearcoat: 0.5,
+          clearcoatRoughness: 0.2,
+        });
+
+        // ── Palm: rounded oblong from a Sphere flattened along Z, slightly tapered top ──
+        const palmGeo = new THREE.SphereGeometry(0.5, 24, 16);
+        const pos = palmGeo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          const x = pos.getX(i),
+            y = pos.getY(i),
+            z = pos.getZ(i);
+          // Squash Z (palm thickness)
+          pos.setZ(i, z * 0.32);
+          // Stretch Y (palm length)
+          pos.setY(i, y * 1.05);
+          // Taper top (toward fingers): narrower at top
+          if (y > 0) pos.setX(i, x * (1 - 0.08 * y));
+          // Widen bottom toward wrist slightly
+        }
+        palmGeo.computeVertexNormals();
+        const palm = new THREE.Mesh(palmGeo, skin);
+        palm.castShadow = true;
+        palm.receiveShadow = true;
+        palm.position.set(0, 0, 0);
+        g.add(palm);
+
+        // ── Wrist stub ──
+        const wristGeo = new THREE.CylinderGeometry(0.32, 0.34, 0.32, 24);
+        const wrist = new THREE.Mesh(wristGeo, skin);
+        wrist.position.set(0, -0.6, 0);
+        wrist.castShadow = true;
+        g.add(wrist);
+
+        // ── Fingers ──
+        // Index/Middle/Ring/Pinky originate at top of palm (y ≈ +0.5).
+        // Thumb originates from the side (radial, bottom of palm).
+        // Each phalanx has its OWN bone +Y = bone direction.
+        // To attach finger to palm, the finger root is positioned at palm-top
+        // with rotation 0 (so finger points up). The next phalanx attaches at the
+        // top of the previous phalanx (y = len).
+        const fingers = [
+          // [name, originX, originY, originZ, baseYaw, baseRoll, lengths, radii]
+          {
+            n: "thumb",
+            pos: [-0.5, -0.2, 0.05],
+            yaw: 0.55,
+            roll: 1.05,
+            lens: [0.34, 0.28, 0.22],
+            rads: [0.12, 0.1, 0.085],
+          },
+          {
+            n: "index",
+            pos: [-0.32, 0.5, 0.0],
+            yaw: 0.06,
+            roll: 0.0,
+            lens: [0.42, 0.28, 0.22],
+            rads: [0.105, 0.095, 0.082],
+          },
+          {
+            n: "middle",
+            pos: [-0.1, 0.55, 0.0],
+            yaw: 0.0,
+            roll: 0.0,
+            lens: [0.46, 0.32, 0.24],
+            rads: [0.11, 0.1, 0.085],
+          },
+          {
+            n: "ring",
+            pos: [0.13, 0.52, 0.0],
+            yaw: -0.05,
+            roll: 0.0,
+            lens: [0.42, 0.3, 0.22],
+            rads: [0.105, 0.095, 0.08],
+          },
+          {
+            n: "pinky",
+            pos: [0.33, 0.42, 0.0],
+            yaw: -0.18,
+            roll: 0.0,
+            lens: [0.32, 0.22, 0.18],
+            rads: [0.09, 0.082, 0.072],
+          },
+        ];
+        const fingerBones = [];
+        fingers.forEach((f, fi) => {
+          // Anchor (Bone): position at palm joint, rotated to the finger's natural splay
+          const anchor = new THREE.Bone();
+          anchor.position.set(f.pos[0], f.pos[1], f.pos[2]);
+          anchor.rotation.set(0, f.yaw, f.roll);
+          g.add(anchor);
+
+          const chain = [];
+          let parent = anchor;
+          for (let i = 0; i < 3; i++) {
+            const len = f.lens[i];
+            const r0 = f.rads[i];
+            const r1 = f.rads[i] * 0.92;
+
+            const pivot = new THREE.Bone(); // rotates here for joint flex
+            parent.add(pivot);
+
+            // Phalanx mesh: tapered capsule, centered so y goes 0..len
+            const phGeo = new THREE.CapsuleGeometry(
+              (r0 + r1) / 2,
+              len - (r0 + r1),
+              8,
+              16,
+            );
+            phGeo.translate(0, len / 2, 0);
+            const phMesh = new THREE.Mesh(phGeo, skin);
+            phMesh.castShadow = true;
+            phMesh.receiveShadow = true;
+            pivot.add(phMesh);
+
+            // Knuckle sphere at base for smooth joint
+            const knu = new THREE.Mesh(
+              new THREE.SphereGeometry(r0 * 1.05, 16, 12),
+              skin,
+            );
+            knu.castShadow = true;
+            pivot.add(knu);
+
+            // Fingernail on distal phalanx
+            if (i === 2) {
+              const nail = new THREE.Mesh(
+                new THREE.SphereGeometry(r1 * 0.9, 14, 10),
+                nailMat,
+              );
+              nail.scale.set(1, 0.35, 0.55);
+              nail.position.set(0, len * 0.78, r1 * 0.42);
+              pivot.add(nail);
+            }
+
+            chain.push(pivot);
+            // Next phalanx attaches at top of current
+            const next = new THREE.Bone();
+            next.position.set(0, len, 0);
+            pivot.add(next);
+            parent = next;
+          }
+          fingerBones.push(chain);
+        });
+
+        g.userData.fingerBones = fingerBones;
+        g.scale.setScalar(0.55);
+        // Rotate 180° around Y so the PALM faces the camera (not the back of hand).
+        // Slight downward tilt so fingertips lean toward viewer for a 3/4 angle.
+        g.rotation.set(-0.25, Math.PI, 0.0);
+        // Shift hand down so wrist sits near the bottom of the viewport.
+        g.position.set(0, -0.25, 0);
+        return g;
+      }
+
+      // ─── Init ───
+      let sceneTrue, scenePred;
+
+      async function setupScenes() {
+        sceneTrue = await makeHandScene(
+          document.getElementById("canvas-true"),
+          document.getElementById("loading-true"),
+        );
+        scenePred = await makeHandScene(
+          document.getElementById("canvas-pred"),
+          document.getElementById("loading-pred"),
+        );
+        function loop() {
+          sceneTrue && sceneTrue.render();
+          scenePred && scenePred.render();
+          requestAnimationFrame(loop);
+        }
+        loop();
+      }
+
+      async function loadManifest(dataset) {
+        const m = await fetch(`data/${dataset}/manifest.json`).then((r) =>
+          r.json(),
+        );
+        state.manifest = m;
+        return m;
+      }
+
+      function applyDatasetUI() {
+        const isGhent = state.dataset === "ghent";
+        // Hide finger highlighter + 3D hands + playback for Ghent (lines only)
+        document.getElementById("finger").parentElement.style.display = isGhent
+          ? "none"
+          : "";
+        document.getElementById("playbtn").parentElement.style.display = isGhent
+          ? "none"
+          : "";
+        document.getElementById("timeSlider").parentElement.style.display =
+          isGhent ? "none" : "";
+        document.querySelector(".right-stack").style.display = isGhent
+          ? "none"
+          : "";
+        document.querySelector(".grid").style.gridTemplateColumns = isGhent
+          ? "1fr"
+          : "1fr 320px";
+        const subtitle = document.getElementById("subtitle");
+        subtitle.textContent = isGhent
+          ? "Speech envelope decoding — predicted vs ground-truth lines."
+          : "Live finger decoding with side-by-side ground-truth vs predicted hand animation.";
+        // Plot card title
+        const plotCard = document.querySelector(".grid .card h3");
+        if (plotCard)
+          plotCard.firstChild.textContent = isGhent
+            ? "Predicted vs Ground-Truth Speech Envelope (over time)"
+            : "Predicted vs Ground-Truth Finger Flexion (over time)";
+        // Per-fraction metric grid: hide for Ghent (only 1 channel)
+        document.getElementById("metrics").style.gridTemplateColumns = isGhent
+          ? "1fr"
+          : "repeat(5, 1fr)";
+      }
+
+      function rebuildSelects() {
+        const subSel = document.getElementById("subject");
+        const modSel = document.getElementById("model");
+        subSel.innerHTML = "";
+        modSel.innerHTML = "";
+        state.manifest.subjects.forEach((s) => {
+          const o = document.createElement("option");
+          o.value = s;
+          o.textContent = s;
+          subSel.appendChild(o);
+        });
+        state.manifest.models.forEach((m) => {
+          const o = document.createElement("option");
+          o.value = m;
+          o.textContent = m;
+          modSel.appendChild(o);
+        });
+        state.subject = state.manifest.subjects[0];
+        state.model = state.manifest.models[0];
+      }
+
+      async function init() {
+        await setupScenes();
+        await loadManifest("stanford");
+        rebuildSelects();
+        const fSel = document.getElementById("finger");
+        FINGER_NAMES.forEach((n, i) => {
+          const o = document.createElement("option");
+          o.value = i;
+          o.textContent = n;
+          fSel.appendChild(o);
+        });
+
+        document
+          .getElementById("dataset")
+          .addEventListener("change", async (e) => {
+            state.dataset = e.target.value;
+            await loadManifest(state.dataset);
+            rebuildSelects();
+            applyDatasetUI();
+            await loadAndRender();
+          });
+        document.getElementById("subject").addEventListener("change", (e) => {
+          state.subject = e.target.value;
+          loadAndRender();
+        });
+        document.getElementById("model").addEventListener("change", (e) => {
+          state.model = e.target.value;
+          updateSmooth();
+          render();
+          document.getElementById("pred-badge").textContent = (
+            state.model.split("(")[0] || "model"
+          ).trim();
+        });
+        fSel.addEventListener("change", (e) => {
+          state.finger = +e.target.value;
+          render();
+        });
+        document.getElementById("smoothing").addEventListener("change", (e) => {
+          state.smoothing = +e.target.value;
+          updateSmooth();
+          render();
+        });
+        document.getElementById("timeSlider").addEventListener("input", (e) => {
+          state.t = +e.target.value;
+          updateAnimation();
+          drawPlotCursor();
+        });
+        document
+          .getElementById("playbtn")
+          .addEventListener("click", togglePlay);
+
+        applyDatasetUI();
+        await loadAndRender();
+      }
+
+      async function loadAndRender() {
+        const sub = state.subject;
+        state.data = await fetch(`data/${state.dataset}/${sub}.json`).then(
+          (r) => r.json(),
+        );
+        // Normalize to 2D arrays so smoothing + plot code is uniform.
+        state.data.y_true = ensure2D(state.data.y_true);
+        for (const mname of Object.keys(state.data.models)) {
+          state.data.models[mname].y_pred = ensure2D(
+            state.data.models[mname].y_pred,
+          );
+        }
+        state.T = state.data.y_true.length;
+        document.getElementById("timeSlider").max = state.T - 1;
+        state.t = 0;
+        document.getElementById("timeSlider").value = 0;
+        updateSmooth();
+        render();
+      }
+
+      function updateSmooth() {
+        if (!state.data) return;
+        const m = state.data.models[state.model];
+        state.yt_smooth = movingAverage(state.data.y_true, state.smoothing);
+        state.yp_smooth = m ? movingAverage(m.y_pred, state.smoothing) : null;
+      }
+
+      function render() {
+        if (!state.data) return;
+        drawPlot();
+        drawMetrics();
+        drawSummary();
+        updateAnimation();
+      }
+
+      function drawPlot() {
+        const d = state.data;
+        const m = d.models[state.model];
+        if (!m) {
+          document.getElementById("plot").innerHTML =
+            "<i>No data for this model on this subject.</i>";
+          return;
+        }
+        const T = d.y_true.length;
+        const t_axis = Array.from(
+          { length: T },
+          (_, i) => i / (state.data.fs_hz || 25),
+        );
+        const isGhent = state.dataset === "ghent";
+        const nCh = isGhent ? 1 : 5;
+        const labels = isGhent ? ["Envelope"] : FINGER_NAMES;
+        const traces = [];
+        const yt_disp = state.yt_smooth || d.y_true;
+        const yp_disp = state.yp_smooth || m.y_pred;
+        for (let f = 0; f < nCh; f++) {
+          const opacity = isGhent ? 1.0 : f === state.finger ? 1.0 : 0.18;
+          traces.push({
+            x: t_axis,
+            y: yt_disp.map((r) => r[f]),
+            name: `${labels[f]} (true)`,
+            line: { color: "#888", dash: "dash", width: 2 },
+            opacity,
+          });
+          traces.push({
+            x: t_axis,
+            y: yp_disp.map((r) => r[f]),
+            name: `${labels[f]} (pred)`,
+            line: { color: "#0969da", width: 2 },
+            opacity,
+          });
+        }
+        // Time cursor — only for Stanford (Ghent has no playback)
+        if (!isGhent) {
+          traces.push({
+            x: [t_axis[state.t], t_axis[state.t]],
+            y: [-3, 3],
+            mode: "lines",
+            showlegend: false,
+            line: { color: "#cf222e", width: 1, dash: "dot" },
+            hoverinfo: "skip",
+          });
+        }
+        Plotly.react(
+          "plot",
+          traces,
+          {
+            margin: { l: 50, r: 20, t: 10, b: 60 },
+            xaxis: { title: "Time (s)" },
+            yaxis: {
+              title: isGhent ? "Envelope (z-scored)" : "Flexion (z-scored)",
+              range: [-3, 3],
+            },
+            legend: { orientation: "h", y: -0.18 },
+            hovermode: "x unified",
+          },
+          { responsive: true, displayModeBar: false },
+        );
+      }
+
+      function drawPlotCursor() {
+        const d = state.data;
+        if (!d || state.dataset === "ghent") return;
+        const t_axis_pt = state.t / (state.data.fs_hz || 25);
+        // Cursor is the last trace; use trace index = 2*5 = 10 for Stanford
+        Plotly.restyle("plot", { x: [[t_axis_pt, t_axis_pt]] }, [10]);
+      }
+
+      function drawMetrics() {
+        const d = state.data;
+        const m = d.models[state.model];
+        const div = document.getElementById("metrics");
+        div.innerHTML = "";
+        if (!m) return;
+        const isGhent = state.dataset === "ghent";
+        if (isGhent) {
+          const r = m.corr;
+          const el = document.createElement("div");
+          el.className = "metric";
+          const color = r > 0.5 ? "#1a7f37" : r > 0.3 ? "#9a6700" : "#cf222e";
+          el.innerHTML = `<div class="value" style="color:${color}">r=${r.toFixed(3)}</div><div class="label">Speech envelope</div>`;
+          div.appendChild(el);
+        } else {
+          for (let f = 0; f < 5; f++) {
+            const r = m.corr_per_finger[f];
+            const el = document.createElement("div");
+            el.className = "metric";
+            const color = r > 0.5 ? "#1a7f37" : r > 0.3 ? "#9a6700" : "#cf222e";
+            el.innerHTML = `<div class="value" style="color:${color}">r=${r.toFixed(3)}</div><div class="label">${FINGER_NAMES[f]}</div>`;
+            div.appendChild(el);
+          }
+        }
+      }
+
+      function drawSummary() {
+        const d = state.data;
+        const sum = document.getElementById("summary");
+        if (!d) return;
+        const isGhent = state.dataset === "ghent";
+        const rows = Object.entries(d.models)
+          .map(([name, mod]) => [name, isGhent ? mod.corr : mod.corr_mean])
+          .sort((a, b) => b[1] - a[1])
+          .map(([name, val]) => `<b>${name}</b>: r = ${val.toFixed(3)}`)
+          .join("&nbsp;&nbsp;|&nbsp;&nbsp;");
+        const datasetLabel = isGhent
+          ? "Ghent speech envelope"
+          : "Stanford finger movement";
+        sum.innerHTML = `<b>${datasetLabel}</b> • Subject <b>${d.subject}</b> • duration ≈ ${d.duration_s}s • smoothing window = ${state.smoothing} • ${rows}`;
+      }
+
+      function updateAnimation() {
+        if (!state.data || state.dataset === "ghent" || !sceneTrue) return;
+        document.getElementById("timeSlider").value = state.t;
+        const yt = (state.yt_smooth || state.data.y_true)[state.t];
+        const yp = state.yp_smooth ? state.yp_smooth[state.t] : yt;
+        for (let f = 0; f < 5; f++) {
+          const isHi = f === state.finger;
+          sceneTrue.setFingerFlex(f, yt[f], isHi);
+          scenePred.setFingerFlex(f, yp[f], isHi);
+        }
+      }
+
+      function togglePlay() {
+        state.playing = !state.playing;
+        document.getElementById("playbtn").textContent = state.playing
+          ? "⏸ Pause"
+          : "▶ Play";
+        if (state.playing) {
+          state.timer = setInterval(() => {
+            state.t = (state.t + 2) % state.T;
+            updateAnimation();
+            drawPlotCursor();
+          }, 50);
+        } else {
+          clearInterval(state.timer);
+        }
+      }
+
+      init();
+    </script>
+
+    <footer
+      style="
+        margin-top: 30px;
+        padding-top: 16px;
+        border-top: 1px solid #d0d7de;
+        font-size: 12px;
+        color: #57606a;
+      "
+    >
+      Stanford finger movement (n=9) • Ghent speech envelope (n=16) • Hand:
+      procedural Three.js mesh (built in-page, no external assets) • Drag the
+      hand to rotate
+    </footer>
+  </body>
+</html>

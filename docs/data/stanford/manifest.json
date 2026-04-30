@@ -1,0 +1,30 @@
+{
+  "subjects": [
+    "bp",
+    "cc",
+    "ht",
+    "jc",
+    "jp",
+    "mv",
+    "wc",
+    "wm",
+    "zt"
+  ],
+  "fingers": [
+    "thumb",
+    "index",
+    "middle",
+    "ring",
+    "pinky"
+  ],
+  "models": [
+    "CORTEG-Small (LoRA + adapter) \u2b50",
+    "CORTEG-Large (HBN, 145ch)",
+    "CORTEG-Large (original)",
+    "CORTEG (random init, full FT)",
+    "Per-subject pretrained",
+    "Per-subject random init",
+    "Ridge (classical)",
+    "PLS (classical)"
+  ]
+}
