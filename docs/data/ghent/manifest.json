@@ -24,6 +24,8 @@
     "CORTEG (random init)",
     "Per-subject pretrained",
     "Per-subject random init",
+    "HiLoFuseNet (deep classical)",
+    "CNN-LSTM (deep classical)",
     "Ridge (classical)",
     "PLS (classical)"
   ]

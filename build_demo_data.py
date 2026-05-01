@@ -28,6 +28,7 @@ STANFORD_MODELS = {
     "CORTEG (random init, full FT)": "stanford_random_fullft_adapter_rerun_v2",
     "Per-subject pretrained": "stanford_persub_pretrained_lora/f1.0",
     "Per-subject random init": "stanford_persub_random/f1.0",
+    "HiLoFuseNet (deep classical)": "stanford_lowdata_baselines/hilofusenet_f1.0_with_preds",
     "Ridge (classical)": "stanford_lowdata_baselines/ridge_f1.0_with_preds",
     "PLS (classical)": "stanford_lowdata_baselines/pls_f1.0_with_preds",
 }
@@ -48,6 +49,8 @@ GHENT_MODELS = {
     "CORTEG (random init)": "ghent_mni_corrected/random_lora_adapter",
     "Per-subject pretrained": "ghent_mni_corrected/persub_pretrained",
     "Per-subject random init": "ghent_mni_corrected/persub_random",
+    "HiLoFuseNet (deep classical)": "ghent_mni_corrected/hilofusenet_persub_with_preds",
+    "CNN-LSTM (deep classical)": "ghent_mni_corrected/cnn_lstm_persub_with_preds",
     "Ridge (classical)": "ghent_mni_corrected/ridge_persub_with_preds",
     "PLS (classical)": "ghent_mni_corrected/pls_persub_with_preds",
 }
