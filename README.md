@@ -9,7 +9,7 @@
 [![Demo](https://img.shields.io/badge/demo-live-2ea44f.svg)](https://liuyinyang1101.github.io/CORTEG/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![CORTEG overview](docs/assets/fig1_architecture.png)
+![CORTEG overview](docs/assets/figure1_overview_scheme.png)
 
 ## Motivation
 
