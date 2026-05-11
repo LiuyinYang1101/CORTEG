@@ -18,14 +18,11 @@
     "pinky"
   ],
   "models": [
-    "CORTEG-Small (LoRA + adapter) \u2b50",
-    "CORTEG-Large (HBN, 145ch)",
-    "CORTEG-Large (original)",
-    "CORTEG (random init, full FT)",
-    "Per-subject pretrained",
-    "Per-subject random init",
-    "HiLoFuseNet (deep classical)",
-    "Ridge (classical)",
-    "PLS (classical)"
+    "CORTEG (pooled) \u2b50",
+    "Random init (no pretrain)",
+    "CORTEG (per-subject)",
+    "HiLoFuseNet",
+    "Ridge",
+    "PLS"
   ]
 }

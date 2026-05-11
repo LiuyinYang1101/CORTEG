@@ -3,14 +3,21 @@
 Extracts predictions for selected models and subjects (Stanford finger movement
 + Ghent speech envelope), downsamples to keep the static site small, and writes
 per-subject JSON manifests.
+
+Model labels here are paper-aligned. The Stanford set covers Table 1 main rows
+plus the key "random init" ablation. The Ghent set is included for
+visualization only (the dataset itself is private).
 """
 import json
 import os
 from pathlib import Path
 import numpy as np
 
-ROOT = Path("/home/liuyin/workspace/outputs/ECoG_EEGFM")
-DOCS_DATA = Path(__file__).resolve().parent.parent / "docs" / "data"
+ROOT = Path(os.environ.get(
+    "CORTEG_OUTPUT_ROOT",
+    os.path.expanduser("~/workspace/outputs/ECoG_EEGFM"),
+))
+DOCS_DATA = Path(__file__).resolve().parent / "docs" / "data"
 
 # ─── Stanford (finger movement, 5 outputs) ───
 STANFORD_OUT = DOCS_DATA / "stanford"
@@ -19,18 +26,14 @@ STANFORD_OUT.mkdir(parents=True, exist_ok=True)
 STANFORD_SUBJECTS = ["bp", "cc", "ht", "jc", "jp", "mv", "wc", "wm", "zt"]
 FINGERS = ["thumb", "index", "middle", "ring", "pinky"]
 
-# Order: CORTEG family (Small/Base/Large) first, then baselines.
-# "Base" omitted (no Stanford Base predictions saved); only Small + Large variants.
+# Paper-aligned: 6 models — Table 1 main rows + one ablation
 STANFORD_MODELS = {
-    "CORTEG-Small (LoRA + adapter) ⭐": "stanford_best_lora_adapter",
-    "CORTEG-Large (HBN, 145ch)": "stanford_large_hbn_145ch_v2",
-    "CORTEG-Large (original)": "stanford_large_orig_v2",
-    "CORTEG (random init, full FT)": "stanford_random_fullft_adapter_rerun_v2",
-    "Per-subject pretrained": "stanford_persub_pretrained_lora/f1.0",
-    "Per-subject random init": "stanford_persub_random/f1.0",
-    "HiLoFuseNet (deep classical)": "stanford_lowdata_baselines/hilofusenet_f1.0_with_preds",
-    "Ridge (classical)": "stanford_lowdata_baselines/ridge_f1.0_with_preds",
-    "PLS (classical)": "stanford_lowdata_baselines/pls_f1.0_with_preds",
+    "CORTEG (pooled) ⭐":         "stanford_best_lora_adapter",
+    "Random init (no pretrain)":     "stanford_random_fullft_adapter_rerun_v2",
+    "CORTEG (per-subject)":          "stanford_persub_pretrained_lora/f1.0",
+    "HiLoFuseNet":                   "stanford_lowdata_baselines/hilofusenet_f1.0_with_preds",
+    "Ridge":                         "stanford_lowdata_baselines/ridge_f1.0_with_preds",
+    "PLS":                           "stanford_lowdata_baselines/pls_f1.0_with_preds",
 }
 
 # ─── Ghent (speech envelope, 1 output) ───
@@ -42,17 +45,14 @@ GHENT_SUBJECTS = ["2018_001", "2019_001", "2019_003", "2019_004", "2019_007",
                   "2021_001", "2021_002", "2021_005-1", "2021_006", "2021_007",
                   "2021_008-1"]
 
+# Paper-aligned: 6 models — same scheme as Stanford, no CNN-LSTM (not stored on disk)
 GHENT_MODELS = {
-    "CORTEG (LoRA + adapter) ⭐": "ghent_mni_corrected/pretrained_lora_adapter",
-    "CORTEG (LoRA, no adapter)": "ghent_mni_corrected/pretrained_lora_noadapter",
-    "CORTEG (full FT)": "ghent_mni_corrected/pretrained_fullft_adapter",
-    "CORTEG (random init)": "ghent_mni_corrected/random_lora_adapter",
-    "Per-subject pretrained": "ghent_mni_corrected/persub_pretrained",
-    "Per-subject random init": "ghent_mni_corrected/persub_random",
-    "HiLoFuseNet (deep classical)": "ghent_mni_corrected/hilofusenet_persub_with_preds",
-    "CNN-LSTM (deep classical)": "ghent_mni_corrected/cnn_lstm_persub_with_preds",
-    "Ridge (classical)": "ghent_mni_corrected/ridge_persub_with_preds",
-    "PLS (classical)": "ghent_mni_corrected/pls_persub_with_preds",
+    "CORTEG (pooled) ⭐":         "ghent_mni_corrected/pretrained_lora_adapter",
+    "Random init (no pretrain)":     "ghent_mni_corrected/random_lora_adapter",
+    "CORTEG (per-subject)":          "ghent_mni_corrected/persub_pretrained",
+    "HiLoFuseNet":                   "ghent_mni_corrected/hilofusenet_persub_with_preds",
+    "Ridge":                         "ghent_mni_corrected/ridge_persub_with_preds",
+    "PLS":                           "ghent_mni_corrected/pls_persub_with_preds",
 }
 
 TARGET_LENGTH = 1000

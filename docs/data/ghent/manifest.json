@@ -18,15 +18,11 @@
     "2021_008-1"
   ],
   "models": [
-    "CORTEG (LoRA + adapter) \u2b50",
-    "CORTEG (LoRA, no adapter)",
-    "CORTEG (full FT)",
-    "CORTEG (random init)",
-    "Per-subject pretrained",
-    "Per-subject random init",
-    "HiLoFuseNet (deep classical)",
-    "CNN-LSTM (deep classical)",
-    "Ridge (classical)",
-    "PLS (classical)"
+    "CORTEG (pooled) \u2b50",
+    "Random init (no pretrain)",
+    "CORTEG (per-subject)",
+    "HiLoFuseNet",
+    "Ridge",
+    "PLS"
   ]
 }
