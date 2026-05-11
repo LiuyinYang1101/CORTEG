@@ -17,9 +17,9 @@ $ECOG_PRETRAINED_ROOT/
   experiment5_large/checkpoint-196.pth      # Large  (D=1024, L=24, 303 M params)
 ```
 
-**Source.** TODO — link to the ST-EEGFormer release once that project is
-public. The original paper's redistribution license applies; we do not
-re-host these weights here.
+**Source.** Released by the [ST-EEGFormer repo](https://github.com/LiuyinYang1101/STEEGFormer);
+follow its README for the download links. The original paper's redistribution
+license applies — we do not re-host these weights here.
 
 The Small backbone is sufficient for all main paper numbers (Table 1, Table 2).
 
