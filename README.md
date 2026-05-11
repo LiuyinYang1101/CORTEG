@@ -1,71 +1,115 @@
-# CORTEG — Cross-Modal Representation Transfer to ECoG Decoding
+# CORTEG
 
-> Foundation-model transfer from scalp EEG to intracranial ECoG decoding.
+**Foundation Models Enable Cross-Modality Representation Transfer from Scalp to Intracranial Brain Recordings**
 
-🌐 **[Live interactive demo →](https://liuyinyang1101.github.io/CORTEG/)**
+[![Paper](https://img.shields.io/badge/arXiv-TODO-b31b1b.svg)](https://arxiv.org/abs/TODO)
+[![Demo](https://img.shields.io/badge/demo-live-2ea44f.svg)](https://liuyinyang1101.github.io/CORTEG/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Side-by-side ground-truth vs predicted hand animation (Stanford finger movement) and
-speech envelope traces (Ghent), with model selector and trajectory smoothing.
+CORTEG adapts a pretrained scalp-EEG foundation model to intracranial ECoG
+decoding. A new patient can be calibrated from a pooled population model in
+**10–30 minutes on a single GPU**, matching or surpassing task-specific deep
+baselines on continuous finger-trajectory and audio-envelope regression.
+
+> 🌐 **[Live interactive demo →](https://liuyinyang1101.github.io/CORTEG/)** —
+> side-by-side ground-truth vs. predicted hand animation (Stanford) and speech-envelope
+> traces (Ghent), with model selector and trajectory smoothing.
 
 ## Highlights
 
-- **Stanford finger movement** (n=9): LOO-finetune matches population training
-  (Wilcoxon p=0.65 vs Pool, n=9)
-- **Ghent speech envelope** (n=16): LOO-finetune matches population training
-  (Wilcoxon p=0.82 vs Pool, n=16) — significantly beats LaBraM, CBraMod, HiLoFuseNet,
-  CNN-LSTM, and per-subject baselines (all p<0.01)
-- The same recipe **transfers across tasks** without subject-specific re-pretraining
+- **Stanford finger movement** (n=9, public): pooled CORTEG reaches r=0.554,
+  above the strongest prior decoders (DeepFingerNet 0.542, HiLoFuseNet 0.534).
+- **Ghent audio envelope** (n=16, private dataset): pooled CORTEG reaches
+  r=0.339 vs. 0.261 (CNN-LSTM) — gap significant under Bonferroni-corrected
+  paired Wilcoxon.
+- **Leave-one-subject-out fine-tuning** (LOO-FT) recovers pooled-level
+  performance while updating only ≈297K parameters (LoRA + spatial adapter).
 
-## Demo features
+## Repository scope
 
-- 🎚️ **Dataset toggle**: Stanford finger movement ↔ Ghent speech envelope
-- 👆 **Subject selector** (9 Stanford / 16 Ghent)
-- 🤖 **Model selector** with multiple variants (CORTEG-Small/Large, ablations,
-  per-subject baselines, classical methods)
-- 📈 **Live time-series plot** with all 5 fingers (Stanford) or 1D envelope (Ghent),
-  ground-truth vs prediction overlay
-- ✋ **3D hand animation** (Stanford only) — side-by-side ground-truth vs predicted
-  hand, both driven by the same time slider
-- 🌊 **Trajectory smoothing** (off / 5 / 11 / 21-sample moving average)
-- 🎯 **Per-finger correlation cards** updated live with the selected model
-
-The demo is fully **static** — runs entirely in the browser via Three.js + Plotly.
-No backend required.
-
-## Project structure
+This release reproduces all paper results on the **public Stanford
+fingerflex dataset**. The Ghent speech-envelope dataset is private and is
+**not** redistributed; its predictions are included in the live demo for
+visualization only.
 
 ```
-docs/
-├── index.html         ← single-page interactive demo
-└── data/
-    ├── stanford/      ← finger movement predictions (9 subjects × 8 models)
-    └── ghent/         ← speech envelope predictions (16 subjects × 8 models)
-build_demo_data.py     ← rebuild the data/ JSONs from raw prediction outputs
+models/steegformer/   ST-EEGFormer backbone, KNNSoftFourier spatial adapter, LoRA
+models/               LaBraM / CBraMod / classical baselines
+data/                 Stanford loader, splits, z-score scalers, collate
+train/                Training engine, early-stopping, LR schedule
+experiments/          Runner scripts (CORTEG + every baseline)
+configs/              ST-EEGFormer Small/Base/Large JSONs
+scripts/              Paper-aligned reproduction shell scripts (one per table/figure)
+docs/                 Live interactive demo (Three.js + Plotly, no backend)
 ```
 
-## Local preview
+| Paper artefact | Script |
+| --- | --- |
+| Table 1, CORTEG pooled (Stanford) | `scripts/table1_corteg_pooled_stanford.sh` |
+| Table 1, CORTEG LOO-FT | `scripts/table1_corteg_loo_ft.sh <subject>` |
+| Table 1, classical baselines | `scripts/table1_classical_baselines.sh` |
+| Table 2, ablations | `scripts/table2_ablations.sh` |
+| Fig 2(b,d), scaling + low-data | `scripts/fig2_scaling_and_lowdata.sh` |
+
+Full reproduction recipe: [`REPRODUCE.md`](REPRODUCE.md).
+
+## Install
 
 ```bash
 git clone https://github.com/LiuyinYang1101/CORTEG.git
-cd CORTEG/docs
-python -m http.server 8000
-# open http://localhost:8000
+cd CORTEG
+conda create -n corteg python=3.11 -y && conda activate corteg
+pip install -e .
 ```
 
-## Reproduce the demo data
+Tested on Ubuntu 24.04 with PyTorch 2.11 / CUDA 12.8 on an RTX 5090.
 
-`build_demo_data.py` extracts predictions from the research codebase's output
-directory and writes the compact JSON files used by `index.html`. Edit the
-`STANFORD_MODELS` / `GHENT_MODELS` dicts at the top of the script to add or
-remove models.
+## Quick start
+
+1. **Data.** See [`DATASETS.md`](DATASETS.md) for the Stanford fingerflex
+   download instructions.
+2. **Pretrained weights.** See [`CHECKPOINTS.md`](CHECKPOINTS.md) for both the
+   ST-EEGFormer EEG-FM backbone and the released CORTEG adapter.
+3. **Set environment.**
+   ```bash
+   export CORTEG_DATA_ROOT=$HOME/workspace/datasets/stanford_ecog
+   export ECOG_PRETRAINED_ROOT=$HOME/workspace/datasets/pretrained_eeg_mae
+   export CORTEG_OUTPUT_ROOT=$HOME/workspace/outputs/corteg
+   ```
+4. **Reproduce Table 1, CORTEG pooled:**
+   ```bash
+   bash scripts/table1_corteg_pooled_stanford.sh
+   ```
+   ~6–12 GPU-hours on a single RTX 5090.
+
+## Interactive demo
+
+`docs/` is a static, single-page site (Three.js + Plotly, no backend) that
+visualises ground-truth vs. predicted trajectories across 9 Stanford subjects
+× 16 Ghent subjects × a curated set of models matched to the paper's
+Table 1 + key ablation rows. Live at
+[liuyinyang1101.github.io/CORTEG](https://liuyinyang1101.github.io/CORTEG/),
+or locally:
+
+```bash
+cd docs && python -m http.server 8000   # open http://localhost:8000
+```
 
 ## License
 
-Demo code: MIT.
-Research code and trained models: see the main research repository (private).
+Code: MIT (see [LICENSE](LICENSE)). The pretrained ST-EEGFormer backbone is
+distributed under its own license — see [CHECKPOINTS.md](CHECKPOINTS.md).
+Ghent dataset: not included.
 
 ## Citation
 
-```
-[BibTeX coming soon — paper under review]
+```bibtex
+@misc{corteg2026,
+  title  = {CORTEG: Foundation Models Enable Cross-Modality Representation Transfer
+            from Scalp to Intracranial Brain Recordings},
+  author = {TODO: replace with arXiv author list},
+  year   = {2026},
+  eprint = {TODO},
+  archivePrefix = {arXiv}
+}
 ```
