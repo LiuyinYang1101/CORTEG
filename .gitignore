@@ -1,12 +1,51 @@
-# OS
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+env/
+conda_env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+*~
 .DS_Store
 Thumbs.db
 
-# Python (only used by build_demo_data.py)
-__pycache__/
-*.pyc
-.venv/
+# Data — never committed; loaded from CORTEG_DATA_ROOT / ECOG_GHENT_ROOT
+*.pkl
+*.pickle
+*.mat
+*.h5
+*.hdf5
+*.edf
+*.fif
+*.npy
+*.npz
 
-# Editors
-.idea/
-.vscode/
+# Model weights / checkpoints — released separately (see CHECKPOINTS.md)
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Experiment outputs
+outputs/
+results/
+logs/
+wandb/
+slurm-*.out
+
+# Local working copy of the paper PDF (released via arXiv)
+CORTEG.pdf
