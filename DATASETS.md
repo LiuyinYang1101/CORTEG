@@ -28,8 +28,9 @@ The preprocessing pipeline that produces these `*_features.pkl` files
 follows DeepFingerNet (Petrosyan et al., 2022) — band-pass 70–200 Hz with
 Hilbert envelope for the HGA stream, band-pass 1–64 Hz for the LFS stream,
 both downsampled to 200 Hz / 128 Hz respectively, then synchronised with the
-finger trajectories at 25 Hz. See [`baselines/THIRDPARTY.md`](baselines/THIRDPARTY.md)
-for a pointer to the reference preprocessing code.
+finger trajectories at 25 Hz. The full recipe (MATLAB cleaning + Python
+feature extraction) lives in
+[`data/stanford_preprocessing/`](data/stanford_preprocessing/tutorial_Stanford.md).
 
 ## Ghent speech-envelope — private (not redistributed)
 
