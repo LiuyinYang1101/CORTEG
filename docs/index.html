@@ -413,6 +413,9 @@
           const chain = bones[idx];
           const rest = restRot[idx];
           if (!chain || chain.length === 0) return;
+          // Skip if flex is undefined/NaN (e.g. stale frame during async dataset switch).
+          // Without this guard, NaN propagates into bone.rotation and the bone collapses.
+          if (!Number.isFinite(flex)) return;
           // Map flexion from z-scored (-2..3) → curl factor (0..1)
           const norm = Math.max(0, Math.min(1, (flex + 2) / 5));
           // Per-joint multipliers (more bend toward distal)
@@ -423,7 +426,9 @@
             // Sign: empirical — negative curls in toward palm for both rigs
             const sign = -1;
             const restEuler = rest[i];
-            const cur = bone.rotation[CURL_AXIS];
+            // Self-heal: if a prior bad frame left this NaN, snap back to rest.
+            const prev = bone.rotation[CURL_AXIS];
+            const cur = Number.isFinite(prev) ? prev : restEuler[CURL_AXIS];
             const tgt = restEuler[CURL_AXIS] + sign * target;
             // Smooth approach
             bone.rotation[CURL_AXIS] = cur + (tgt - cur) * 0.35;
@@ -703,6 +708,9 @@
         document
           .getElementById("dataset")
           .addEventListener("change", async (e) => {
+            // Stop playback before swapping datasets — otherwise the timer keeps
+            // firing into stale data during the async load and can corrupt bone state.
+            if (state.playing) togglePlay();
             state.dataset = e.target.value;
             await loadManifest(state.dataset);
             rebuildSelects();
