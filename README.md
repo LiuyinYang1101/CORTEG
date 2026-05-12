@@ -5,7 +5,7 @@
 > Adapt a frozen scalp-EEG foundation model to intracranial ECoG decoding —
 > calibrate to a new patient in **10–30 minutes** on a single GPU.
 
-[![Paper](https://img.shields.io/badge/arXiv-TODO-b31b1b.svg)](https://arxiv.org/abs/TODO)
+[![Paper](https://img.shields.io/badge/arXiv-2605.10337-b31b1b.svg)](https://arxiv.org/abs/2605.10337)
 [![Demo](https://img.shields.io/badge/demo-live-2ea44f.svg)](https://liuyinyang1101.github.io/CORTEG/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -151,9 +151,9 @@ Ghent dataset: not included.
 @misc{corteg2026,
   title  = {CORTEG: Foundation Models Enable Cross-Modality Representation Transfer
             from Scalp to Intracranial Brain Recordings},
-  author = {TODO: replace with arXiv author list},
+  author = {Liuyin Yang and Qiang Sun and Bob Van Dyck and Eva Calvo Merino and Marc M. Van Hulle},
   year   = {2026},
-  eprint = {TODO},
+  eprint = {2605.10337},
   archivePrefix = {arXiv}
 }
 ```
