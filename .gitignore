@@ -49,3 +49,5 @@ slurm-*.out
 
 # Local working copy of the paper PDF (released via arXiv)
 CORTEG.pdf
+
+*.pdf

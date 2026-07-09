@@ -856,6 +856,15 @@ def main():
             else:
                 shapes_by_sid.append((x_tr.shape[1], x_tr.shape[2]))
 
+        # Free the raw float64 SubjectData records now that the float32 dataset
+        # tensors (tr_list/va_list/te_list) are built. subj_data is never read
+        # again, but otherwise stays alive in this frame for the whole run and
+        # holds ~27 GB (all subjects, float64) -> drove the OOM that froze the
+        # box (2026-06-19, 2026-06-24). Frees ~27 GB; numerically a no-op.
+        del subj_data
+        import gc
+        gc.collect()
+
     # ---- Pooled Training ----
     if args.train_mode == "pooled":
         set_seed(args.seed)
@@ -921,7 +930,7 @@ def main():
         tr_sampler = SubjectInterleavedSampler(tr_sizes, args.batch_size, shuffle=True)
         train_loader = DataLoader(
             ConcatDataset(pool_tr), batch_sampler=tr_sampler,
-            num_workers=0, pin_memory=True, worker_init_fn=seed_worker, collate_fn=collate_fn,
+            num_workers=0, pin_memory=False, worker_init_fn=seed_worker, collate_fn=collate_fn,
         )
         # Validation/test: all subjects (monitor held-out performance)
         val_loaders = [DataLoader(ds, batch_size=64, collate_fn=collate_fn) for ds in va_list]
