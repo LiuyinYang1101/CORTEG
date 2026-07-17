@@ -52,6 +52,28 @@
         color: #57606a;
         font-weight: 600;
       }
+      .finger-toggles {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 6px 2px;
+        min-width: 180px;
+      }
+      .finger-toggles .ftoggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #24292f;
+        cursor: pointer;
+        user-select: none;
+      }
+      .finger-toggles .ftoggle input {
+        margin: 0;
+        cursor: pointer;
+        accent-color: #2da44e;
+      }
       .controls select,
       .controls input[type="range"] {
         padding: 6px 8px;
@@ -209,6 +231,10 @@
         <select id="finger"></select>
       </label>
       <label
+        >Animate fingers
+        <span id="fingerToggles" class="finger-toggles"></span>
+      </label>
+      <label
         >Smoothing
         <select id="smoothing">
           <option value="1">Off</option>
@@ -268,36 +294,124 @@
       import * as THREE from "three";
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+      import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
-      // ─── Free hand mesh: Meta/Oculus generic hand from immersive-web/webxr-input-profiles
-      // Public, MIT-licensed, available via jsdelivr CDN.
-      const HAND_GLB_URL =
-        "https://cdn.jsdelivr.net/gh/immersive-web/webxr-input-profiles@main/packages/assets/profiles/generic-hand/right.glb";
+      // --- Real rigged hand mesh ---------------------------------------
+      // Generic hand from immersive-web/webxr-input-profiles (Apache-2.0),
+      // committed under docs/assets/ so the demo works offline with no CDN.
+      // The XR_HAND skeleton has 25 joints and is FLAT (every joint is a
+      // sibling), so makeHandScene() re-parents them into anatomical chains and
+      // derives each joint's flex axis from its bind pose. (This replaced the
+      // in-page procedural hand after the bind-pose rig was solved.)
+      const HAND_GLB_URL = "assets/right.glb";
 
-      // Bone names in the WebXR generic-hand glb use XR_HAND joint conventions
-      const FINGER_BONE_PATTERNS = [
-        ["thumb-phalanx-proximal", "thumb-phalanx-distal"],
-        [
-          "index-finger-phalanx-proximal",
-          "index-finger-phalanx-intermediate",
-          "index-finger-phalanx-distal",
-        ],
-        [
-          "middle-finger-phalanx-proximal",
-          "middle-finger-phalanx-intermediate",
-          "middle-finger-phalanx-distal",
-        ],
-        [
-          "ring-finger-phalanx-proximal",
-          "ring-finger-phalanx-intermediate",
-          "ring-finger-phalanx-distal",
-        ],
-        [
-          "pinky-finger-phalanx-proximal",
-          "pinky-finger-phalanx-intermediate",
-          "pinky-finger-phalanx-distal",
-        ],
+      // Finger flex defs (XR_HAND naming; thumb has no intermediate phalanx).
+      // flex entry: [boneName, maxAngle(rad at full curl), progressPow]; a
+      // progressPow > 1 makes a joint engage later (natural distal-lagging roll).
+      function fingerDef(prefix, mcFlex) {
+        return {
+          chain: [prefix + "-metacarpal", prefix + "-phalanx-proximal",
+                  prefix + "-phalanx-intermediate", prefix + "-phalanx-distal",
+                  prefix + "-tip"],
+          flex: [
+            [prefix + "-metacarpal", mcFlex, 1.0],
+            [prefix + "-phalanx-proximal", 1.35, 1.0],
+            [prefix + "-phalanx-intermediate", 1.6, 1.12],
+            [prefix + "-phalanx-distal", 0.95, 1.25],
+          ].filter((f) => f[1] > 0),
+        };
+      }
+      // Order matches FINGER_NAMES and the data channels: Thumb..Pinky.
+      const HAND_FINGERS = [
+        {
+          isThumb: true,
+          chain: ["thumb-metacarpal", "thumb-phalanx-proximal",
+                  "thumb-phalanx-distal", "thumb-tip"],
+          flex: [
+            ["thumb-metacarpal", 0.55, 1.0],
+            ["thumb-phalanx-proximal", 1.0, 1.05],
+            ["thumb-phalanx-distal", 0.8, 1.2],
+          ],
+          // Opposition: per-joint blend of the flex target toward the inner palm.
+          // ul = across-palm (adduction), up = toward finger bases, twist = pronation.
+          // Makes the thumb sweep across/inward as it closes instead of curling down.
+          oppose: {
+            "thumb-metacarpal": { ul: 0.7, up: 0.05, twist: 0.35 },
+            "thumb-phalanx-proximal": { ul: 0.42, up: 0.4, twist: 0.15 },
+            "thumb-phalanx-distal": { ul: 0.15, up: 0.22, twist: 0.0 },
+          },
+        },
+        fingerDef("index-finger", 0),
+        fingerDef("middle-finger", 0.04),
+        fingerDef("ring-finger", 0.11),
+        fingerDef("pinky-finger", 0.18),
       ];
+
+      // Skin + nail materials and a procedural micro-normal, built once and
+      // shared by both hand scenes.
+      function mulberry32(a) {
+        return function () {
+          a |= 0; a = (a + 0x6d2b79f5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      function blurWrap(src, size, r) {
+        const tmp = new Float32Array(src.length), w = 2 * r + 1;
+        for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+          let sum = 0;
+          for (let k = -r; k <= r; k++) sum += src[y * size + ((x + k + size) % size)];
+          tmp[y * size + x] = sum / w;
+        }
+        for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+          let sum = 0;
+          for (let k = -r; k <= r; k++) sum += tmp[((y + k + size) % size) * size + x];
+          src[y * size + x] = sum / w;
+        }
+      }
+      function makeMicroNormalTexture(size) {
+        size = size || 256;
+        const rnd = mulberry32(1337);
+        const h = new Float32Array(size * size);
+        for (let i = 0; i < h.length; i++) h[i] = rnd();
+        blurWrap(h, size, 2); blurWrap(h, size, 2);
+        const fine = new Float32Array(size * size);
+        for (let i = 0; i < fine.length; i++) fine[i] = rnd();
+        blurWrap(fine, size, 1);
+        for (let i = 0; i < h.length; i++) h[i] = h[i] * 0.8 + fine[i] * 0.2;
+        const data = new Uint8Array(size * size * 4), k = 2.2, n = new THREE.Vector3();
+        for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+          const xm = (x - 1 + size) % size, xp = (x + 1) % size;
+          const ym = (y - 1 + size) % size, yp = (y + 1) % size;
+          const dx = h[y * size + xp] - h[y * size + xm];
+          const dy = h[yp * size + x] - h[ym * size + x];
+          n.set(-dx * k, -dy * k, 1).normalize();
+          const i4 = (y * size + x) * 4;
+          data[i4] = (n.x * 0.5 + 0.5) * 255;
+          data[i4 + 1] = (n.y * 0.5 + 0.5) * 255;
+          data[i4 + 2] = (n.z * 0.5 + 0.5) * 255;
+          data[i4 + 3] = 255;
+        }
+        const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(3, 3);
+        tex.needsUpdate = true;
+        return tex;
+      }
+      const SKIN_MAT = new THREE.MeshPhysicalMaterial({
+        color: 0xe0a685, roughness: 0.52, metalness: 0.0,
+        sheen: 0.35, sheenColor: 0xffd9c0, sheenRoughness: 0.6,
+        clearcoat: 0.07, clearcoatRoughness: 0.5,
+        emissive: 0x91301c, emissiveIntensity: 0.035,
+        normalMap: makeMicroNormalTexture(), normalScale: new THREE.Vector2(0.28, 0.28),
+        envMapIntensity: 0.65,
+      });
+      const NAIL_MAT = new THREE.MeshPhysicalMaterial({
+        color: 0xe9c6b4, roughness: 0.32, metalness: 0.0,
+        clearcoat: 1.0, clearcoatRoughness: 0.15,
+        sheen: 0.15, sheenColor: 0xfff0e6, envMapIntensity: 0.8,
+      });
 
       const FINGER_NAMES = ["Thumb", "Index", "Middle", "Ring", "Pinky"];
 
@@ -306,6 +420,7 @@
         subject: null,
         model: null,
         finger: 0,
+        active: [true, true, true, true, true], // Thumb..Pinky fingers that animate on the hand
         smoothing: 11,
         data: null,
         manifest: null,
@@ -342,54 +457,252 @@
         return out;
       }
 
-      // ─── Build a hand scene that loads the GLB ───
+      // --- Build a hand scene that loads and rigs the real GLB hand ---
+      // The XR_HAND GLB ships with a FLAT skeleton (all 25 joints are siblings)
+      // and identity-oriented joints, so naive curling twists/splays the
+      // fingers. We (1) re-parent bones into anatomical chains with attach()
+      // (which preserves the bind pose, so the skin binding stays valid), then
+      // (2) derive each joint's flex axis from its bind pose, so curling bends
+      // every finger toward the palm regardless of the bone convention.
       async function makeHandScene(canvas, loadingEl) {
-        const renderer = new THREE.WebGLRenderer({
-          canvas,
-          antialias: true,
-          alpha: true,
-        });
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
         renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 100);
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+        const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
         camera.position.set(0.0, 0.3, 2.2);
         camera.lookAt(0, 0, 0);
 
-        scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-        const key = new THREE.DirectionalLight(0xfff5e8, 1.2);
-        key.position.set(0.4, 0.6, 0.5);
+        const key = new THREE.DirectionalLight(0xffe3c4, 2.6);
+        key.position.set(1.6, 2.4, 1.9);
         key.castShadow = true;
         key.shadow.mapSize.set(1024, 1024);
+        key.shadow.camera.left = -1.4; key.shadow.camera.right = 1.4;
+        key.shadow.camera.top = 1.4; key.shadow.camera.bottom = -1.4;
+        key.shadow.camera.near = 0.5; key.shadow.camera.far = 8;
+        key.shadow.bias = -0.0002; key.shadow.normalBias = 0.045; key.shadow.radius = 6;
         scene.add(key);
-        const rim = new THREE.DirectionalLight(0xa0c0ff, 0.5);
-        rim.position.set(-0.5, 0.2, -0.4);
+        const rim = new THREE.DirectionalLight(0x9db8ff, 1.7);
+        rim.position.set(-2.2, 1.1, -1.9);
         scene.add(rim);
+        scene.add(new THREE.HemisphereLight(0xe6ecf6, 0xb08d75, 0.45));
 
-        // Subtle ground for shadow
         const ground = new THREE.Mesh(
-          new THREE.PlaneGeometry(6, 6),
-          new THREE.ShadowMaterial({ opacity: 0.18 }),
+          new THREE.PlaneGeometry(10, 10),
+          new THREE.ShadowMaterial({ opacity: 0.22, color: 0x3a3028 }),
         );
         ground.rotation.x = -Math.PI / 2;
-        ground.position.y = -0.7;
         ground.receiveShadow = true;
         scene.add(ground);
 
-        // Build procedural hand directly (GLB approach had bind-pose orientation issues).
-        // Bones are clean +Y-aligned, so X-axis rotation gives perfect finger curl.
-        let bones = [];
-        let restRot = [];
-        let handRoot = makeProceduralHand();
-        scene.add(handRoot);
-        bones = handRoot.userData.fingerBones;
-        restRot = bones.map((chain) => chain.map((b) => b.rotation.clone()));
-        if (loadingEl) loadingEl.style.display = "none";
+        const _q = new THREE.Quaternion();
+        const _q2 = new THREE.Quaternion();
+        let drivenFingers = null;
+        const targetT = [0, 0, 0, 0, 0];
+        const curT = [0, 0, 0, 0, 0];
+        const active = [true, true, true, true, true]; // fingers that animate; others held straight
+
+        // Load + rig the real hand (async).
+        let gltf;
+        try {
+          gltf = await new Promise((res, rej) =>
+            new GLTFLoader().load(HAND_GLB_URL, res, undefined, rej),
+          );
+          buildHand(gltf);
+          if (loadingEl) loadingEl.style.display = "none";
+        } catch (e) {
+          if (loadingEl) loadingEl.textContent = "hand model failed to load";
+          console.error("hand GLB load/rig failed:", e);
+        }
+
+        function buildHand(g) {
+          const root = g.scene;
+          let mesh = null;
+          root.traverse((o) => { if (o.isSkinnedMesh) mesh = o; });
+          if (!mesh) throw new Error("no SkinnedMesh in hand GLB");
+          mesh.castShadow = true;
+          mesh.frustumCulled = false;
+          if (mesh.geometry.index) mesh.geometry.computeVertexNormals();
+          mesh.material = SKIN_MAT;
+
+          const boneMap = {};
+          mesh.skeleton.bones.forEach((b) => (boneMap[b.name] = b));
+          const getBone = (n) => boneMap[n] ||
+            boneMap[Object.keys(boneMap).find((x) => x.replace(/[^a-z-]/gi, "") === n)];
+          const need = (n) => { const b = getBone(n); if (!b) throw new Error("missing bone " + n); return b; };
+
+          const wrist = need("wrist");
+          root.updateMatrixWorld(true);
+
+          // (1) rebuild anatomical FK chains (attach preserves world/bind pose)
+          for (const f of HAND_FINGERS) {
+            let parent = wrist;
+            for (const name of f.chain) {
+              const b = need(name);
+              if (b.parent !== parent) parent.attach(b);
+              parent = b;
+            }
+          }
+          root.updateMatrixWorld(true);
+
+          // (2) derive the hand frame from the bind pose (no assumed conventions)
+          const P = (b) => b.getWorldPosition(new THREE.Vector3());
+          const wp = P(wrist);
+          const fingerDir = P(need("middle-finger-tip")).sub(wp).normalize();
+          const palm = P(need("index-finger-phalanx-proximal")).sub(wp)
+            .cross(P(need("pinky-finger-phalanx-proximal")).sub(wp)).normalize();
+          const thumbCheck = P(need("thumb-phalanx-proximal")).sub(wp)
+            .cross(P(need("middle-finger-phalanx-proximal")).sub(wp));
+          if (palm.dot(thumbCheck) < 0) palm.negate();
+
+          // (3) reorient (fingers +Y, palm +Z toward camera), centre + scale
+          const yAxis = fingerDir.clone();
+          const zAxis = palm.clone().addScaledVector(yAxis, -palm.dot(yAxis)).normalize();
+          const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
+          const rig = new THREE.Group();
+          rig.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis)).invert();
+          rig.add(root);
+          scene.add(rig);
+          rig.updateMatrixWorld(true);
+          let box = new THREE.Box3().setFromObject(rig);
+          const size = box.getSize(new THREE.Vector3());
+          rig.scale.setScalar(1.12 / size.y);
+          rig.updateMatrixWorld(true);
+          box = new THREE.Box3().setFromObject(rig);
+          const centre = box.getCenter(new THREE.Vector3());
+          rig.position.sub(centre);
+          rig.position.y += 0.03;
+          rig.updateMatrixWorld(true);
+          box = new THREE.Box3().setFromObject(rig);
+          ground.position.y = box.min.y - 0.07;
+
+          const palmWorld = new THREE.Vector3(0, 0, 1);
+
+          // Ulnar (across-palm, toward the pinky / inner palm) direction, from
+          // bone world positions so it is handedness-robust: thumb base -> pinky
+          // base, projected into the palm plane. Flips automatically for a left hand.
+          const ulnarWorld = P(need("pinky-finger-metacarpal"))
+            .sub(P(need("thumb-metacarpal")));
+          ulnarWorld.addScaledVector(palmWorld, -ulnarWorld.dot(palmWorld)).normalize();
+          // "toward the finger bases" (after reorientation this is world +Y).
+          const fingerUpWorld = new THREE.Vector3(0, 1, 0);
+
+          // (4) per-joint flex axis from bind pose, (5) empirical sign calibration.
+          // Four fingers flex toward the palm normal (unchanged); the thumb's
+          // per-joint target is normalize(palm + ul*ulnar + up*fingerUp) — a
+          // blended opposition axis that sweeps it across toward the inner palm.
+          drivenFingers = [];
+          const nailInfo = [];
+          for (const f of HAND_FINGERS) {
+            const tip = need(f.chain[f.chain.length - 1]);
+            const joints = [];
+            for (const [name, max, pow] of f.flex) {
+              const bone = need(name);
+              const child = need(f.chain[f.chain.indexOf(name) + 1]);
+              const forward = child.position.clone().normalize();
+              const invQ = bone.getWorldQuaternion(new THREE.Quaternion()).invert();
+              const opp = f.oppose ? f.oppose[name] : null;
+              const targetWorld = opp
+                ? palmWorld.clone().addScaledVector(ulnarWorld, opp.ul)
+                    .addScaledVector(fingerUpWorld, opp.up || 0).normalize()
+                : palmWorld.clone();
+              const targetLocal = targetWorld.clone().applyQuaternion(invQ);
+              const palmLocal = palmWorld.clone().applyQuaternion(invQ); // kept for nails
+              let axis = new THREE.Vector3().crossVectors(forward, targetLocal);
+              if (axis.lengthSq() < 1e-8) {
+                const fb = Math.abs(forward.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+                axis.crossVectors(forward, fb);
+              }
+              axis.normalize();
+              joints.push({
+                bone, axis, bind: bone.quaternion.clone(), max, pow, sign: 1,
+                forward, palmLocal, targetWorld,
+                twistMax: opp ? opp.twist : 0, twistSign: 1,
+                isDistal: /distal/.test(name),
+              });
+            }
+            const tip0 = P(tip);
+            for (const j of joints) {
+              j.bone.quaternion.copy(j.bind).multiply(_q.setFromAxisAngle(j.axis, 0.5));
+              rig.updateMatrixWorld(true);
+              if (P(tip).sub(tip0).dot(j.targetWorld) < 0) j.sign = -1;
+              j.bone.quaternion.copy(j.bind);
+            }
+            rig.updateMatrixWorld(true);
+
+            // Thumb pronation sign: at full opposition the pad should face the
+            // index base; try both twist signs at full curl and keep the better.
+            if (f.isThumb && joints.some((j) => j.twistMax > 0)) {
+              const padRef = joints[joints.length - 1];
+              const goal = P(need("index-finger-phalanx-proximal"));
+              const evalTwist = (s) => {
+                for (const j of joints) {
+                  _q.setFromAxisAngle(j.axis, j.sign * j.max);
+                  if (j.twistMax) _q.multiply(_q2.setFromAxisAngle(j.forward, s * j.twistMax));
+                  j.bone.quaternion.copy(j.bind).multiply(_q);
+                }
+                rig.updateMatrixWorld(true);
+                const padWorld = padRef.palmLocal.clone()
+                  .applyQuaternion(padRef.bone.getWorldQuaternion(new THREE.Quaternion()));
+                return padWorld.dot(goal.clone().sub(P(tip)).normalize());
+              };
+              const best = evalTwist(1) >= evalTwist(-1) ? 1 : -1;
+              for (const j of joints) { j.twistSign = best; j.bone.quaternion.copy(j.bind); }
+              rig.updateMatrixWorld(true);
+            }
+
+            drivenFingers.push({ joints });
+            const dj = joints.find((j) => j.isDistal);
+            if (dj) nailInfo.push({ finger: f.chain[0].split("-")[0], joint: dj });
+          }
+
+          // (6) procedural fingernails on the distal bones (follow the curl)
+          const nailGeo = new THREE.SphereGeometry(1, 24, 16);
+          const widthFactor = { thumb: 1.05, index: 1.0, middle: 1.0, ring: 0.95, pinky: 0.8 };
+          for (const info of nailInfo) {
+            const bone = info.joint.bone;
+            const childBone = bone.children.find((c) => c.isBone);
+            if (!childBone) continue;
+            const L = childBone.position.length();
+            const fwd = info.joint.forward.clone();
+            const dorsal = info.joint.palmLocal.clone().negate();
+            dorsal.addScaledVector(fwd, -dorsal.dot(fwd)).normalize();
+            const side = new THREE.Vector3().crossVectors(fwd, dorsal).normalize();
+            const holder = new THREE.Object3D();
+            holder.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(side, fwd, dorsal));
+            bone.add(holder);
+            const w = widthFactor[info.finger] || 1;
+            const nail = new THREE.Mesh(nailGeo, NAIL_MAT);
+            nail.scale.set(L * 0.3 * w, L * 0.44, L * 0.13);
+            nail.position.set(0, L * 0.56, L * 0.2);
+            nail.rotation.x = -0.22;
+            nail.castShadow = true;
+            holder.add(nail);
+          }
+        }
+
+        function applyCurl() {
+          if (!drivenFingers) return;
+          for (let i = 0; i < 5; i++) {
+            const c = Math.max(0, Math.min(1, curT[i]));
+            for (const j of drivenFingers[i].joints) {
+              const p = Math.pow(c, j.pow);
+              _q.setFromAxisAngle(j.axis, j.sign * j.max * p);
+              if (j.twistMax) _q.multiply(_q2.setFromAxisAngle(j.forward, j.twistSign * j.twistMax * p));
+              j.bone.quaternion.copy(j.bind).multiply(_q);
+            }
+          }
+        }
 
         const ctrl = new OrbitControls(camera, canvas);
-        ctrl.target.set(0, 0.2, 0);
+        ctrl.target.set(0, 0.0, 0);
         ctrl.enablePan = false;
         ctrl.minDistance = 1.2;
         ctrl.maxDistance = 4.0;
@@ -397,218 +710,41 @@
         function resize() {
           const r = canvas.getBoundingClientRect();
           renderer.setSize(r.width, r.height, false);
-          camera.aspect = r.width / r.height;
+          camera.aspect = (r.width || 1) / (r.height || 1);
           camera.updateProjectionMatrix();
         }
         resize();
         window.addEventListener("resize", resize);
 
-        // WebXR generic-hand bones: per spec +X = dorsal (palm normal),
-        // +Y = along bone, +Z = lateral. Curl is rotation around X (dorsal axis).
-        // Symptom of wrong axis: width distortion = rotating around bone-Y.
-        const isProceduralHand = !!handRoot.userData.fingerBones;
-        const CURL_AXIS = "x";
-
+        // Map a z-scored flexion value to a 0..1 curl target for one finger.
+        // An inactive finger is held at rest (straight) and never moves.
+        // (isHi is accepted for API parity with the old rig; unused.)
         function setFingerFlex(idx, flex, isHi) {
-          const chain = bones[idx];
-          const rest = restRot[idx];
-          if (!chain || chain.length === 0) return;
-          // Skip if flex is undefined/NaN (e.g. stale frame during async dataset switch).
-          // Without this guard, NaN propagates into bone.rotation and the bone collapses.
+          if (!active[idx]) { targetT[idx] = 0; return; }
           if (!Number.isFinite(flex)) return;
-          // Map flexion from z-scored (-2..3) → curl factor (0..1)
-          const norm = Math.max(0, Math.min(1, (flex + 2) / 5));
-          // Per-joint multipliers (more bend toward distal)
-          const mult = [0.85, 1.05, 1.15];
-          chain.forEach((bone, i) => {
-            if (!bone) return;
-            const target = norm * 1.45 * (mult[i] || 1.0);
-            // Sign: empirical — negative curls in toward palm for both rigs
-            const sign = -1;
-            const restEuler = rest[i];
-            // Self-heal: if a prior bad frame left this NaN, snap back to rest.
-            const prev = bone.rotation[CURL_AXIS];
-            const cur = Number.isFinite(prev) ? prev : restEuler[CURL_AXIS];
-            const tgt = restEuler[CURL_AXIS] + sign * target;
-            // Smooth approach
-            bone.rotation[CURL_AXIS] = cur + (tgt - cur) * 0.35;
-          });
+          targetT[idx] = Math.max(0, Math.min(1, (flex + 2) / 5));
+        }
+
+        // Choose which fingers animate: act is a length-5 boolean array
+        // (Thumb..Pinky). Inactive fingers stay visible but straight and still.
+        function setFingerActive(act) {
+          for (let i = 0; i < 5; i++) {
+            active[i] = !!act[i];
+            if (!active[i]) targetT[i] = 0;
+          }
         }
 
         function render() {
+          // Ease each finger toward its target: smooth during playback, and a
+          // single-frame (slider) update still converges over the next frames.
+          if (drivenFingers) {
+            for (let i = 0; i < 5; i++) curT[i] += (targetT[i] - curT[i]) * 0.25;
+            applyCurl();
+          }
           renderer.render(scene, camera);
         }
 
-        return { setFingerFlex, render, resize };
-      }
-
-      // ─── Procedural fallback (minimal) ───
-      function makeProceduralHand() {
-        // Anatomical procedural hand. All bones are +Y-aligned in their local frame,
-        // so rotating around X bends cleanly toward the palm (no width artifacts).
-        const g = new THREE.Group();
-        const skin = new THREE.MeshPhysicalMaterial({
-          color: 0xe6a886,
-          roughness: 0.62,
-          clearcoat: 0.18,
-          clearcoatRoughness: 0.45,
-          sheen: 0.18,
-          sheenColor: 0xffd9b3,
-        });
-        const nailMat = new THREE.MeshPhysicalMaterial({
-          color: 0xf5e1d3,
-          roughness: 0.3,
-          clearcoat: 0.5,
-          clearcoatRoughness: 0.2,
-        });
-
-        // ── Palm: rounded oblong from a Sphere flattened along Z, slightly tapered top ──
-        const palmGeo = new THREE.SphereGeometry(0.5, 24, 16);
-        const pos = palmGeo.attributes.position;
-        for (let i = 0; i < pos.count; i++) {
-          const x = pos.getX(i),
-            y = pos.getY(i),
-            z = pos.getZ(i);
-          // Squash Z (palm thickness)
-          pos.setZ(i, z * 0.32);
-          // Stretch Y (palm length)
-          pos.setY(i, y * 1.05);
-          // Taper top (toward fingers): narrower at top
-          if (y > 0) pos.setX(i, x * (1 - 0.08 * y));
-          // Widen bottom toward wrist slightly
-        }
-        palmGeo.computeVertexNormals();
-        const palm = new THREE.Mesh(palmGeo, skin);
-        palm.castShadow = true;
-        palm.receiveShadow = true;
-        palm.position.set(0, 0, 0);
-        g.add(palm);
-
-        // ── Wrist stub ──
-        const wristGeo = new THREE.CylinderGeometry(0.32, 0.34, 0.32, 24);
-        const wrist = new THREE.Mesh(wristGeo, skin);
-        wrist.position.set(0, -0.6, 0);
-        wrist.castShadow = true;
-        g.add(wrist);
-
-        // ── Fingers ──
-        // Index/Middle/Ring/Pinky originate at top of palm (y ≈ +0.5).
-        // Thumb originates from the side (radial, bottom of palm).
-        // Each phalanx has its OWN bone +Y = bone direction.
-        // To attach finger to palm, the finger root is positioned at palm-top
-        // with rotation 0 (so finger points up). The next phalanx attaches at the
-        // top of the previous phalanx (y = len).
-        const fingers = [
-          // [name, originX, originY, originZ, baseYaw, baseRoll, lengths, radii]
-          {
-            n: "thumb",
-            pos: [-0.5, -0.2, 0.05],
-            yaw: 0.55,
-            roll: 1.05,
-            lens: [0.34, 0.28, 0.22],
-            rads: [0.12, 0.1, 0.085],
-          },
-          {
-            n: "index",
-            pos: [-0.32, 0.5, 0.0],
-            yaw: 0.06,
-            roll: 0.0,
-            lens: [0.42, 0.28, 0.22],
-            rads: [0.105, 0.095, 0.082],
-          },
-          {
-            n: "middle",
-            pos: [-0.1, 0.55, 0.0],
-            yaw: 0.0,
-            roll: 0.0,
-            lens: [0.46, 0.32, 0.24],
-            rads: [0.11, 0.1, 0.085],
-          },
-          {
-            n: "ring",
-            pos: [0.13, 0.52, 0.0],
-            yaw: -0.05,
-            roll: 0.0,
-            lens: [0.42, 0.3, 0.22],
-            rads: [0.105, 0.095, 0.08],
-          },
-          {
-            n: "pinky",
-            pos: [0.33, 0.42, 0.0],
-            yaw: -0.18,
-            roll: 0.0,
-            lens: [0.32, 0.22, 0.18],
-            rads: [0.09, 0.082, 0.072],
-          },
-        ];
-        const fingerBones = [];
-        fingers.forEach((f, fi) => {
-          // Anchor (Bone): position at palm joint, rotated to the finger's natural splay
-          const anchor = new THREE.Bone();
-          anchor.position.set(f.pos[0], f.pos[1], f.pos[2]);
-          anchor.rotation.set(0, f.yaw, f.roll);
-          g.add(anchor);
-
-          const chain = [];
-          let parent = anchor;
-          for (let i = 0; i < 3; i++) {
-            const len = f.lens[i];
-            const r0 = f.rads[i];
-            const r1 = f.rads[i] * 0.92;
-
-            const pivot = new THREE.Bone(); // rotates here for joint flex
-            parent.add(pivot);
-
-            // Phalanx mesh: tapered capsule, centered so y goes 0..len
-            const phGeo = new THREE.CapsuleGeometry(
-              (r0 + r1) / 2,
-              len - (r0 + r1),
-              8,
-              16,
-            );
-            phGeo.translate(0, len / 2, 0);
-            const phMesh = new THREE.Mesh(phGeo, skin);
-            phMesh.castShadow = true;
-            phMesh.receiveShadow = true;
-            pivot.add(phMesh);
-
-            // Knuckle sphere at base for smooth joint
-            const knu = new THREE.Mesh(
-              new THREE.SphereGeometry(r0 * 1.05, 16, 12),
-              skin,
-            );
-            knu.castShadow = true;
-            pivot.add(knu);
-
-            // Fingernail on distal phalanx
-            if (i === 2) {
-              const nail = new THREE.Mesh(
-                new THREE.SphereGeometry(r1 * 0.9, 14, 10),
-                nailMat,
-              );
-              nail.scale.set(1, 0.35, 0.55);
-              nail.position.set(0, len * 0.78, r1 * 0.42);
-              pivot.add(nail);
-            }
-
-            chain.push(pivot);
-            // Next phalanx attaches at top of current
-            const next = new THREE.Bone();
-            next.position.set(0, len, 0);
-            pivot.add(next);
-            parent = next;
-          }
-          fingerBones.push(chain);
-        });
-
-        g.userData.fingerBones = fingerBones;
-        g.scale.setScalar(0.55);
-        // Rotate 180° around Y so the PALM faces the camera (not the back of hand).
-        // Slight downward tilt so fingertips lean toward viewer for a 3/4 angle.
-        g.rotation.set(-0.25, Math.PI, 0.0);
-        // Shift hand down so wrist sits near the bottom of the viewport.
-        g.position.set(0, -0.25, 0);
-        return g;
+        return { setFingerFlex, setFingerActive, render, resize };
       }
 
       // ─── Init ───
@@ -705,6 +841,26 @@
           fSel.appendChild(o);
         });
 
+        // Per-finger checkboxes: choose which fingers animate on the hand.
+        // Unchecked fingers stay visible but straight and still.
+        const ftog = document.getElementById("fingerToggles");
+        FINGER_NAMES.forEach((n, i) => {
+          const lab = document.createElement("label");
+          lab.className = "ftoggle";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = true;
+          cb.addEventListener("change", () => {
+            state.active[i] = cb.checked;
+            applyActive();
+            updateAnimation(); // re-drive active fingers from the current frame
+          });
+          lab.appendChild(cb);
+          lab.appendChild(document.createTextNode(n));
+          ftog.appendChild(lab);
+        });
+        applyActive();
+
         document
           .getElementById("dataset")
           .addEventListener("change", async (e) => {
@@ -751,6 +907,49 @@
         await loadAndRender();
       }
 
+      // Align each model's prediction to the ground-truth per-channel mean/std
+      // so every model displays on the same z-scored axis regardless of the
+      // scale it was exported at (used by loadAndRender).
+      function standardizePreds(d) {
+        const yt = d.y_true;
+        if (!yt || !yt.length) return;
+        const F = yt[0].length;
+        const tMean = new Array(F).fill(0);
+        const tStd = new Array(F).fill(1);
+        for (let f = 0; f < F; f++) {
+          let s = 0;
+          for (let t = 0; t < yt.length; t++) s += yt[t][f];
+          const mean = s / yt.length;
+          let v = 0;
+          for (let t = 0; t < yt.length; t++) {
+            const e = yt[t][f] - mean;
+            v += e * e;
+          }
+          tMean[f] = mean;
+          tStd[f] = Math.sqrt(v / yt.length) || 1;
+        }
+        for (const name of Object.keys(d.models)) {
+          const yp = d.models[name].y_pred;
+          if (!yp || !yp.length) continue;
+          const Fp = yp[0].length;
+          for (let f = 0; f < Fp; f++) {
+            let s = 0;
+            for (let t = 0; t < yp.length; t++) s += yp[t][f];
+            const pMean = s / yp.length;
+            let v = 0;
+            for (let t = 0; t < yp.length; t++) {
+              const e = yp[t][f] - pMean;
+              v += e * e;
+            }
+            const pStd = Math.sqrt(v / yp.length) || 1;
+            const scale = (tStd[f] || 1) / pStd;
+            const off = tMean[f] || 0;
+            for (let t = 0; t < yp.length; t++)
+              yp[t][f] = (yp[t][f] - pMean) * scale + off;
+          }
+        }
+      }
+
       async function loadAndRender() {
         const sub = state.subject;
         state.data = await fetch(`data/${state.dataset}/${sub}.json`).then(
@@ -763,6 +962,12 @@
             state.data.models[mname].y_pred,
           );
         }
+        // Some exported baselines (e.g. Ridge/PLS) were saved on a raw,
+        // unstandardized scale, so their predictions land far off the z-scored
+        // [-3, 3] axis and appear absent. Rescale each model's prediction per
+        // channel to the ground-truth channel's mean/std (correlation is
+        // affine-invariant, so the reported r values are unchanged).
+        standardizePreds(state.data);
         state.T = state.data.y_true.length;
         document.getElementById("timeSlider").max = state.T - 1;
         state.t = 0;
@@ -784,6 +989,12 @@
         drawMetrics();
         drawSummary();
         updateAnimation();
+      }
+
+      // Push the active-finger selection to both hands.
+      function applyActive() {
+        if (sceneTrue) sceneTrue.setFingerActive(state.active);
+        if (scenePred) scenePred.setFingerActive(state.active);
       }
 
       function drawPlot() {
@@ -941,7 +1152,7 @@
       "
     >
       Stanford finger movement (n=9) • Ghent speech envelope (n=16) • Hand:
-      procedural Three.js mesh (built in-page, no external assets) • Drag the
+      real rigged mesh (immersive-web generic hand, Apache-2.0) with a bind-pose-derived finger rig • Drag the
       hand to rotate
     </footer>
   </body>
