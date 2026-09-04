@@ -439,11 +439,15 @@ class TestBrainTreebank(unittest.TestCase):
         xyz_m = np.random.RandomState(0).randn(24, 3).astype(np.float32) * 0.03
         model = build_corteg(24, 128, xyz_m, args)
 
-        soft = model.backbone.channel_adapter.soft
-        init = next(p for n, p in soft.named_parameters() if p.dim() >= 2)
-        self.assertGreater(len(torch.unique(init.detach())), 1,
-                           "the spatial adapter's init is a single constant — "
-                           "knn_sigma=0 collapsed the KNN prior")
+        # The KNN prior is written into the final Linear's BIAS as
+        # log(knn_weights + 1e-8). With sigma=0 every weight is 0, so the bias
+        # becomes the single constant log(1e-8) = -18.42 for all EEG slots.
+        bias = model.backbone.channel_adapter.soft.net[-1].bias.detach()
+        self.assertGreater(len(torch.unique(bias)), 1,
+                           "the spatial adapter's init bias is one constant — "
+                           "knn_sigma=0 collapsed the KNN prior to uniform")
+        self.assertGreater(float(bias.max() - bias.min()), 1.0,
+                           "the init bias is nearly flat; the KNN prior is not peaked")
 
     def test_event_caches_are_keyed_by_seed(self):
         """seed and max_per_class choose WHICH events are drawn.
