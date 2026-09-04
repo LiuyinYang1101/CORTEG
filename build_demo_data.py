@@ -15,7 +15,7 @@ import numpy as np
 
 ROOT = Path(os.environ.get(
     "CORTEG_OUTPUT_ROOT",
-    os.path.expanduser("~/workspace/outputs/ECoG_EEGFM"),
+    os.path.expanduser("~/workspace/outputs/corteg"),
 ))
 DOCS_DATA = Path(__file__).resolve().parent / "docs" / "data"
 

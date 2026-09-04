@@ -252,10 +252,10 @@ class TestPretrainedLoads(unittest.TestCase):
         import numpy as np
         from experiments.run_regression_hilo_clean import build_model
 
-        gt = Path(paths_mod.get_output_root()) / "stanford_best_lora_adapter" / "results_pooled.json"
-        if not gt.exists():
-            self.skipTest("no reference args available")
-        base = json.loads(gt.read_text(encoding="utf-8"))["args"]
+        # The shipped manifest, not a file under the author's output root: this
+        # test has to run for anyone who clones the repo.
+        base = json.loads((REPO / "checkpoints" / "corteg_stanford_pooled.json")
+                          .read_text(encoding="utf-8"))["build_args"]
         xyz = np.random.RandomState(0).randn(64, 3).astype(np.float32) * 30.0
 
         def qkv(**over):
@@ -274,10 +274,8 @@ class TestPretrainedLoads(unittest.TestCase):
         import types
         import numpy as np
         from experiments.run_regression_hilo_clean import build_model
-        gt = Path(__import__("paths").get_output_root()) / "stanford_best_lora_adapter" / "results_pooled.json"
-        if not gt.exists():
-            self.skipTest("no reference args available")
-        base = json.loads(gt.read_text(encoding="utf-8"))["args"]
+        base = json.loads((REPO / "checkpoints" / "corteg_stanford_pooled.json")
+                          .read_text(encoding="utf-8"))["build_args"]
         base.update(model_kwargs_json="", no_pretrained=False)
         xyz = np.random.RandomState(0).randn(64, 3).astype(np.float32) * 30.0
         with self.assertRaises(SystemExit):

@@ -1,5 +1,4 @@
 
-# ECoG_Finger/models/steegformer.py
 # Clean regression-focused STEEGFormer model (Backbone + Wrapper)
 #   - input x: [B, C, T]
 #   - channel ordering corresponds to chan_idx (len=C) OR identity if not provided

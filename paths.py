@@ -1,5 +1,5 @@
 """
-Centralized path resolution for ECoG_EEGFM.
+Centralised path resolution for CORTEG.
 
 Uses environment variables with sensible local defaults so that:
   - Local runs need zero configuration (defaults point to ~/workspace/...)
@@ -13,7 +13,7 @@ import os
 
 _LOCAL_DATA_ROOT = os.path.expanduser("~/workspace/datasets/stanford_ecog")
 _LOCAL_PRETRAINED_ROOT = os.path.expanduser("~/workspace/datasets/pretrained_eeg_mae")
-_LOCAL_OUTPUT_ROOT = os.path.expanduser("~/workspace/outputs/ECoG_EEGFM")
+_LOCAL_OUTPUT_ROOT = os.path.expanduser("~/workspace/outputs/corteg")
 
 
 def _env(*names: str, default: str = "") -> str:
