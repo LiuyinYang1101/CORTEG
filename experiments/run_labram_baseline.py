@@ -72,7 +72,7 @@ class LaBraMRegressor(nn.Module):
         B, C, T_lo = x_lo.shape
 
         if x_hi is not None:
-            # Pad x_lo to match x_hi length if needed (Ghent: x_lo=128, x_hi=200)
+            # Pad x_lo to match x_hi length if needed (x_lo=128, x_hi=200)
             if T_lo < x_hi.shape[2]:
                 x_lo = torch.nn.functional.pad(x_lo, (0, x_hi.shape[2] - T_lo))
             x = torch.stack([x_hi, x_lo], dim=2)  # (B, C, 2, T)
@@ -273,7 +273,7 @@ def main():
 
     # Dataset
     p.add_argument("--dataset", type=str, default="Stanford",
-                    choices=["Stanford", "Ghent"])
+                    choices=["Stanford"])
     p.add_argument("--target_mode", type=str, default="endpoint")
     p.add_argument("--step_ms", type=int, default=200)
     p.add_argument("--eval_step_ms", type=int, default=50)
@@ -305,16 +305,11 @@ def main():
 
     variant_name = "labram_pretrained" if not args.no_pretrained else "labram_random"
 
-    if args.dataset == "Ghent":
-        from data.ghent_loader import load_ghent_datasets, get_ghent_subjects
-        subjects = get_ghent_subjects()
-        d_out = 1
+    if args.subjects:
+        subjects = [s.strip() for s in args.subjects.split(",") if s.strip()]
     else:
-        if args.subjects:
-            subjects = [s.strip() for s in args.subjects.split(",") if s.strip()]
-        else:
-            subjects = STANFORD_SUBJECTS
-        d_out = 5
+        subjects = STANFORD_SUBJECTS
+    d_out = 5
     file_root = args.data_root if args.data_root else get_data_root()
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -394,20 +389,10 @@ def main():
         from torch.utils.data import ConcatDataset
         tr_list, va_list, te_list = [], [], []
 
-        if args.dataset == "Ghent":
-            # Ghent: use windowed HDF5 datasets (runtime z-score, same as STEEGFormer)
-            ghent_tr, ghent_va, ghent_te, shapes, _, collate_fn_g, _, _ = load_ghent_datasets(
-                subjects=subjects, step_ms=args.step_ms,
-                eval_step_ms=args.eval_step_ms, target_mode=args.target_mode,
-                need_xyz=False,
-            )
-            tr_list, va_list, te_list = ghent_tr, ghent_va, ghent_te
-            collate_fn = collate_fn_g
-        else:
-            for sid, sub in enumerate(subjects):
-                sd = load_subject(file_root, sub, require_xyz=False)
-                ds_tr, ds_va, ds_te, _, _ = prepare_subject(sd, sid)
-                tr_list.append(ds_tr); va_list.append(ds_va); te_list.append(ds_te)
+        for sid, sub in enumerate(subjects):
+            sd = load_subject(file_root, sub, require_xyz=False)
+            ds_tr, ds_va, ds_te, _, _ = prepare_subject(sd, sid)
+            tr_list.append(ds_tr); va_list.append(ds_va); te_list.append(ds_te)
 
         model = build_labram(args, d_out=d_out).to(device)
         for p_param in model.head.parameters():
@@ -418,20 +403,9 @@ def main():
             from models.steegformer.steegformer_hilo_clean import KNNSoftFourierAdapter
             # Need initial XYZ for adapter construction — use first subject with valid XYZ
             init_xyz = None
-            if args.dataset == "Ghent":
-                import h5py
-                ghent_dir = os.path.expanduser("~/workspace/datasets/Ghent_story/processed")
-                for sub in subjects:
-                    h5 = h5py.File(os.path.join(ghent_dir, f"{sub}.h5"), "r")
-                    xyz = np.array(h5["channel_xyz"]) / 1000.0  # mm → meters
-                    h5.close()
-                    if np.isfinite(xyz).all():
-                        init_xyz = torch.tensor(xyz, dtype=torch.float32)
-                        break
-            else:
-                sd0 = load_subject(file_root, subjects[0], require_xyz=True)
-                if sd0.ecog_xyz_mm is not None:
-                    init_xyz = torch.tensor(sd0.ecog_xyz_mm / 1000.0, dtype=torch.float32)
+            sd0 = load_subject(file_root, subjects[0], require_xyz=True)
+            if sd0.ecog_xyz_mm is not None:
+                init_xyz = torch.tensor(sd0.ecog_xyz_mm / 1000.0, dtype=torch.float32)
 
             if init_xyz is not None:
                 # Use LaBraM's channel positions from its montage for kNN spatial lookup
@@ -478,20 +452,8 @@ def main():
                     model.adapter_proj.to(device)
                 # Need xyz_bank for collate
                 from data.collate import SubjectXYZBank
-                if args.dataset == "Ghent":
-                    xyz_list = []
-                    for sub in subjects:
-                        h5 = h5py.File(os.path.join(ghent_dir, f"{sub}.h5"), "r")
-                        xyz = np.array(h5["channel_xyz"])  # mm
-                        h5.close()
-                        if np.isfinite(xyz).all():
-                            xyz_list.append(xyz)
-                        else:
-                            xyz_list.append(np.zeros_like(xyz))
-                    xyz_bank = SubjectXYZBank.from_mm(xyz_list)
-                else:
-                    xyz_list = [load_subject(file_root, s, require_xyz=True).ecog_xyz_mm for s in subjects]
-                    xyz_bank = SubjectXYZBank.from_mm(xyz_list)
+                xyz_list = [load_subject(file_root, s, require_xyz=True).ecog_xyz_mm for s in subjects]
+                xyz_bank = SubjectXYZBank.from_mm(xyz_list)
                 collate_fn = make_collate_fn(xyz_bank)
                 print(f"  [adapter] KNNSoftFourier attached (k={args.knn_k})")
 

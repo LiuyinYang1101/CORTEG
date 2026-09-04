@@ -212,7 +212,7 @@ def main():
     p.add_argument("--train_fraction", type=float, default=1.0)
     # Dataset
     p.add_argument("--dataset", type=str, default="Stanford",
-                    choices=["Stanford", "Ghent"])
+                    choices=["Stanford"])
     p.add_argument("--target_mode", type=str, default="endpoint")
     p.add_argument("--step_ms", type=int, default=200)
     p.add_argument("--eval_step_ms", type=int, default=50)
@@ -229,13 +229,8 @@ def main():
 
     variant_name = "cbramod_pretrained" if not args.no_pretrained else "cbramod_random"
 
-    if args.dataset == "Ghent":
-        from data.ghent_loader import load_ghent_datasets, get_ghent_subjects
-        subjects = get_ghent_subjects()
-        d_out = 1
-    else:
-        subjects = [s.strip() for s in args.subjects.split(",") if s.strip()] if args.subjects else STANFORD_SUBJECTS
-        d_out = 5
+    subjects = [s.strip() for s in args.subjects.split(",") if s.strip()] if args.subjects else STANFORD_SUBJECTS
+    d_out = 5
     file_root = args.data_root if args.data_root else get_data_root()
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -296,19 +291,10 @@ def main():
         from experiments.common import format_subject_table
         tr_list, va_list, te_list = [], [], []
 
-        if args.dataset == "Ghent":
-            ghent_tr, ghent_va, ghent_te, shapes, _, collate_fn_g, _, _ = load_ghent_datasets(
-                subjects=subjects, step_ms=args.step_ms,
-                eval_step_ms=args.eval_step_ms, target_mode=args.target_mode,
-                need_xyz=False,
-            )
-            tr_list, va_list, te_list = ghent_tr, ghent_va, ghent_te
-            collate_fn = collate_fn_g
-        else:
-            for sid, sub in enumerate(subjects):
-                sd = load_subject(file_root, sub, require_xyz=False)
-                ds_tr, ds_va, ds_te = prepare_subject(sd, sid)
-                tr_list.append(ds_tr); va_list.append(ds_va); te_list.append(ds_te)
+        for sid, sub in enumerate(subjects):
+            sd = load_subject(file_root, sub, require_xyz=False)
+            ds_tr, ds_va, ds_te = prepare_subject(sd, sid)
+            tr_list.append(ds_tr); va_list.append(ds_va); te_list.append(ds_te)
 
         model = build_cbramod(args, d_out=d_out).to(device)
         for p_param in model.head.parameters():

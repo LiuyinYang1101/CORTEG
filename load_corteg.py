@@ -2,7 +2,7 @@
 
 The released checkpoint holds only the ~297 K trainable parameters (LoRA,
 spatial adapter, LayerNorm, head). The frozen ST-EEGFormer backbone is a
-separate 376 MB download -- see CHECKPOINTS.md.
+separate 376 MB download -- see the Checkpoints section of README.md.
 
 Why this module exists rather than `--finetune_from`: that path loads with
 `strict=False`, which is right for cross-task fine-tuning but wrong for a

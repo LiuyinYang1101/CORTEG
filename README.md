@@ -71,34 +71,37 @@ Full table, ablations, and per-subject paired tests: see the paper.
 
 ## Repository scope
 
-This release reproduces the **CORTEG** rows of Table 1 and Table 2 on the
-**public Stanford fingerflex dataset**. The Ghent speech-envelope dataset is
-private and is **not** redistributed; its predictions are included in the live
-demo for visualization only.
+This release trains and evaluates **CORTEG on the public Stanford fingerflex
+dataset**, in both fusion variants, and ships the trained adapter.
 
-Not yet covered by this release: the classical Table-1 baselines (Ridge / PLS /
-HOPLS / LSTM), the intracranial-FM comparison (BrainBERT / PopT / Brant), the
-BrainTreebank benchmark, layer-wise gated fusion, and the REVE backbone port.
-These are tracked for a follow-up release.
+The **Ghent** speech-envelope dataset is private, is **not** redistributed, and
+no Ghent training code is included. The live demo shows per-subject Ghent
+prediction traces (and the corresponding target envelope segment) for
+visualisation only.
 
 ```
-models/steegformer/   ST-EEGFormer backbone, KNNSoftFourier spatial adapter, LoRA
-models/               LaBraM / CBraMod / classical baselines
+load_corteg.py        load the released adapter and run it
+paths.py              environment-variable path resolution
+models/steegformer/   ST-EEGFormer backbone, KNNSoftFourier adapter, LoRA
+models/               LaBraM / CBraMod foundation-model baselines
 data/                 Stanford loader, splits, z-score scalers, collate
-train/                Training engine, early-stopping, LR schedule
-experiments/          Runner scripts (CORTEG + every baseline)
+train/                training engine, early stopping, LR schedule
+experiments/          CORTEG runner + baseline runners
 configs/              ST-EEGFormer Small/Base/Large JSONs
-scripts/              Paper-aligned reproduction shell scripts (one per table/figure)
-docs/                 Live interactive demo (Three.js + Plotly, no backend)
+scripts/              paper-aligned reproduction scripts
+notebooks/            quickstart.ipynb — start here
+checkpoints/          released CORTEG adapter + manifest
+docs/                 live interactive demo (Three.js + Plotly, no backend)
 ```
 
 | Paper artefact | Script |
 | --- | --- |
 | Table 1, CORTEG pooled (Stanford) | `scripts/table1_corteg_pooled_stanford.sh` |
 | Table 1, CORTEG LOO-FT | `scripts/table1_corteg_loo_ft.sh <subject>` |
-| Table 1, classical baselines | *not in this release* — see [`REPRODUCE.md`](REPRODUCE.md) |
 
-Full reproduction recipe: [`REPRODUCE.md`](REPRODUCE.md).
+Not covered by this release: the intracranial-FM comparison (BrainBERT / PopT /
+Brant), the BrainTreebank benchmark, and the REVE backbone port. Tracked for a
+follow-up.
 
 ## Install
 
@@ -113,21 +116,167 @@ Tested on Ubuntu 24.04 with PyTorch 2.11 / CUDA 12.8 on an RTX 5090.
 
 ## Quick start
 
-1. **Data.** See [`DATASETS.md`](DATASETS.md) for the Stanford fingerflex
-   download instructions.
-2. **Pretrained weights.** See [`CHECKPOINTS.md`](CHECKPOINTS.md) for both the
-   ST-EEGFormer EEG-FM backbone and the released CORTEG adapter.
-3. **Set environment.**
-   ```bash
-   export CORTEG_DATA_ROOT=$HOME/workspace/datasets/stanford_ecog
-   export ECOG_PRETRAINED_ROOT=$HOME/workspace/datasets/pretrained_eeg_mae
-   export CORTEG_OUTPUT_ROOT=$HOME/workspace/outputs/corteg
-   ```
-4. **Reproduce Table 1, CORTEG pooled:**
-   ```bash
-   bash scripts/table1_corteg_pooled_stanford.sh
-   ```
-   ~6–12 GPU-hours on a single RTX 5090.
+**Start with [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb).** It goes
+from a fresh clone to reproducing a published per-subject number, and explains
+the one thing that is easy to get wrong (CORTEG takes *two* input streams).
+
+## Data
+
+### Stanford `fingerflex` — public
+
+5-finger flexion regression from ECoG on 9 epilepsy patients (`bp, cc, ht, jc,
+jp, mv, wc, wm, zt`).
+
+**Source.** Miller K. J., *A library of human electrocorticographic data and
+analyses*, Nat. Hum. Behav. 2019,
+[10.1038/s41562-019-0678-3](https://doi.org/10.1038/s41562-019-0678-3). Hosted on the
+[Stanford Digital Repository](https://exhibits.stanford.edu/data/catalog/zk881ps0522).
+
+**Expected layout** under `$CORTEG_DATA_ROOT`:
+
+```
+bp_features.pkl      # X_feat_tr (N,C,200,2)  X_feat_te  X_raw_tr (N,C,128)  X_raw_te  y_tr (N,5)  y_te (N,5)
+bp_electrode_loc.mat # (C, 3) electrode coordinates in mm
+...                  # one pair per subject
+```
+
+The pipeline that produces these files — MATLAB cleaning plus Python feature
+extraction, band-pass 70–200 Hz with Hilbert envelope for the high-gamma stream
+and 1–64 Hz for the low-frequency stream — is documented step by step in
+[`data/stanford_preprocessing/tutorial_Stanford.md`](data/stanford_preprocessing/tutorial_Stanford.md).
+
+### Ghent speech-envelope — private
+
+Continuous audio-envelope regression on 16 patients at Ghent University
+Hospital, held under their epilepsy-monitoring data-use agreement. **Not part of
+this release**: no data, no checkpoints, no training code. Contact the
+corresponding author to pursue replication.
+
+### Path resolution
+
+| Variable | Used by | Default |
+| --- | --- | --- |
+| `CORTEG_DATA_ROOT` / `ECOG_DATA_ROOT` | Stanford loader | `~/workspace/datasets/stanford_ecog` |
+| `CORTEG_PRETRAINED_ROOT` / `ECOG_PRETRAINED_ROOT` | backbone checkpoints | `~/workspace/datasets/pretrained_eeg_mae` |
+| `CORTEG_OUTPUT_ROOT` / `ECOG_OUTPUT_ROOT` | where runs write results | `~/workspace/outputs/corteg` |
+
+CLI flags (`--data_root`, `--save_root`) take precedence over the environment.
+
+## Checkpoints
+
+CORTEG is **two files**: a large frozen backbone you download once, and a small
+trained adapter that ships here.
+
+### 1. ST-EEGFormer backbone (third-party, required)
+
+Released with the ST-EEGFormer paper. Place under `$CORTEG_PRETRAINED_ROOT`
+matching the paths in `configs/steegformer_*.json`:
+
+```
+experiment3_small/checkpoint-300.pth      # Small  (D=512,  L=8,  25.6 M)  ← all main results
+experiment4_base/checkpoint-288.pth       # Base   (D=768,  L=12, 85.6 M)
+experiment5_large/checkpoint-196.pth      # Large  (D=1024, L=24, 303 M)
+```
+
+The Small backbone is a direct download (376 MB):
+
+```bash
+mkdir -p "$CORTEG_PRETRAINED_ROOT/experiment3_small"
+curl -L -o "$CORTEG_PRETRAINED_ROOT/experiment3_small/checkpoint-300.pth" \
+  https://github.com/LiuyinYang1101/STEEGFormer/releases/download/ST-EEGFormer-small/checkpoint-300.pth
+```
+
+The original paper's redistribution license applies — these weights are not
+re-hosted here.
+
+### 2. CORTEG adapter (this paper, included)
+
+```
+checkpoints/corteg_stanford_pooled.pt     # 1.2 MB, 297,236 params — Table 1 finger row
+checkpoints/corteg_stanford_pooled.json   # manifest: sha256, paper number, exact build args
+```
+
+It holds only the trainable parameters — LoRA A/B on blocks 4–7, the
+KNNSoftFourier adapter, LayerNorms and the head — so it must be loaded together
+with the backbone above.
+
+```python
+from load_corteg import load_corteg, predict
+
+model = load_corteg(C_in=46, T_in=128, ecog_xyz_mm=xyz, d_out=5, device="cuda")
+y = predict(model, x_lo, x_hi)      # (N,46,128) and (N,46,200) -> (N,5)
+```
+
+Prefer this over `--finetune_from`, which loads with `strict=False`: correct for
+cross-task fine-tuning, but against a mismatched architecture it loads almost
+nothing, reports success, and yields an untrained model. `load_corteg` raises
+instead.
+
+**Verified.** This checkpoint reproduces the published per-subject scores on all
+9 Stanford subjects: cohort mean 0.5537 against 0.5535 in the paper, largest
+per-subject deviation 0.0016 (from fitting z-score statistics on the full
+training split rather than the exact 90 % subset).
+
+### 3. Baseline FM checkpoints (optional)
+
+| Model | Path | Source |
+| --- | --- | --- |
+| LaBraM-base | `$CORTEG_PRETRAINED_ROOT/../pretrained_eeg_fms/labram/labram-base.pth` | [LaBraM](https://github.com/935963004/LaBraM) |
+| CBraMod | `$CORTEG_PRETRAINED_ROOT/../pretrained_eeg_fms/cbramod/pretrained_weights.pth` | [CBraMod](https://github.com/wjq-learning/CBraMod) |
+| MantisV2 | `$CORTEG_PRETRAINED_ROOT/../pretrained_tsfm/mantis_v2` | [Mantis-TS](https://github.com/Mantis-TS/MantisV2) |
+
+Each runner takes `--pretrained_path` if you keep them elsewhere. These weights
+are not re-hosted here; each carries its own license.
+
+## Reproducing the paper
+
+```bash
+export CORTEG_DATA_ROOT=$HOME/workspace/datasets/stanford_ecog
+export CORTEG_PRETRAINED_ROOT=$HOME/workspace/datasets/pretrained_eeg_mae
+export CORTEG_OUTPUT_ROOT=$HOME/workspace/outputs/corteg
+```
+
+**Table 1, CORTEG pooled** (≈6–12 GPU-hours on one RTX 5090):
+
+```bash
+bash scripts/table1_corteg_pooled_stanford.sh
+```
+
+**Table 1, CORTEG LOO-FT** (10–30 min per held-out subject after stage 1):
+
+```bash
+for s in bp cc ht jc jp mv wc wm zt; do bash scripts/table1_corteg_loo_ft.sh $s; done
+```
+
+**The two fusion variants.** `--merge_strategy average` is fixed fusion at layer
+*k* (what the released checkpoint uses); `--merge_strategy layerwise_gate` is
+gated fusion, where a small network emits one scalar per block and each block
+receives `+ g_l · hi`. With `tanh` the gates start at exactly 0, so training
+begins from the low-frequency-only baseline.
+
+**Foundation-model baselines:**
+
+```bash
+python -m experiments.run_labram_baseline   --dataset Stanford --train_mode pooled --seed 42
+python -m experiments.run_cbramod_baseline  --dataset Stanford --train_mode pooled --seed 42
+python -m experiments.run_mantis_baseline   --dataset Stanford --train_mode pooled --seed 42
+```
+
+**Numbers taken from their original papers**, not retrained here: DeepFingerNet
+(finger r = 0.542, its Table II) and HiLoFuseNet (r = 0.534, its Table V).
+
+All scripts pin `--seed 42`. Per-subject Pearson r fluctuates by ≈±0.005 across
+seeds.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests
+```
+
+The suite checks that every script loads a pretrained backbone, that no script
+passes a flag the runner does not have, and that the released checkpoint still
+rebuilds and reproduces its paper number.
 
 ## Interactive demo
 
@@ -145,7 +294,7 @@ cd docs && python -m http.server 8000   # open http://localhost:8000
 ## License
 
 Code: MIT (see [LICENSE](LICENSE)). The pretrained ST-EEGFormer backbone is
-distributed under its own license — see [CHECKPOINTS.md](CHECKPOINTS.md).
+distributed under its own license — see **Checkpoints** above.
 Ghent dataset: not included.
 
 ## Citation

@@ -227,7 +227,7 @@ class TestPretrainedLoads(unittest.TestCase):
         rel = _json.loads(cfg.read_text(encoding="utf-8"))["pretrained"]["path"]
         import paths as paths_mod
         if not os.path.exists(paths_mod.resolve_pretrained_path(rel)):
-            self.skipTest("ST-EEGFormer backbone not present; see CHECKPOINTS.md")
+            self.skipTest("ST-EEGFormer backbone not present; see README.md")
 
         import types
         import numpy as np
@@ -307,7 +307,7 @@ class TestReleasedCheckpoint(unittest.TestCase):
         import paths as paths_mod
         rel = json.loads(cfg.read_text(encoding="utf-8"))["pretrained"]["path"]
         if not os.path.exists(paths_mod.resolve_pretrained_path(rel)):
-            self.skipTest("ST-EEGFormer backbone not present; see CHECKPOINTS.md")
+            self.skipTest("ST-EEGFormer backbone not present; see README.md")
         C, T_LO, T_HI = 46, 128, 200        # real Stanford dims, subject bp
         xyz = np.random.RandomState(0).randn(C, 3).astype(np.float32) * 0.03
         model = load_corteg(C_in=C, T_in=T_LO, ecog_xyz_mm=xyz, d_out=5)
@@ -378,22 +378,22 @@ class TestPaths(unittest.TestCase):
 class TestDocs(unittest.TestCase):
     def test_docs_do_not_reference_removed_scripts(self):
         stale = []
-        for doc in ("README.md", "REPRODUCE.md", "CHECKPOINTS.md", "DATASETS.md"):
+        for doc in ("README.md",):
             text = (REPO / doc).read_text(encoding="utf-8")
             for ref in re.findall(r'scripts/[A-Za-z0-9_]+\.sh', text):
                 if not (REPO / ref).exists():
                     stale.append(f"{doc}: {ref}")
         self.assertEqual(stale, [], "\n" + "\n".join(stale))
 
-    def test_checkpoints_does_not_advertise_the_broken_eval_recipe(self):
-        text = (REPO / "CHECKPOINTS.md").read_text(encoding="utf-8")
+    def test_readme_does_not_advertise_the_broken_eval_recipe(self):
+        text = (REPO / "README.md").read_text(encoding="utf-8")
         # Only fenced code blocks are recipes a reader would copy; surrounding
         # prose may legitimately name the broken pairing in order to warn about it.
         for block in re.findall(r"```[a-z]*\n(.*?)```", text, re.S):
             if "--finetune_from" in block:
                 self.assertNotIn(
                     "--train_mode per_subject", block,
-                    "CHECKPOINTS.md ships a recipe pairing --finetune_from with "
+                    "README.md ships a recipe pairing --finetune_from with "
                     "--train_mode per_subject, which never reads the checkpoint",
                 )
 
