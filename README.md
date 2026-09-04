@@ -179,9 +179,11 @@ found during development:
   clamps out-of-range inputs to the end value, collapsing 47 % of `sub_6`'s
   events onto one identical window, with both labels.
 
-**Verified.** Running this pipeline on `sub_3` from the raw download gives a
-mean AUROC of 0.751 over the four causal folds, against 0.756 reported for that
-subject in the paper (single seed here; the paper averages seeds 1, 2 and 42).
+`--train_mode pooled` is the default and the configuration the paper reports:
+one model across all subjects, built at the largest electrode count, with batches
+kept homogeneous per subject and per-subject AUROC read off the shared model's
+held-out folds. `--train_mode per_subject` trains an independent model per
+subject — a different experiment, and it produces different numbers.
 
 Splits are strictly causal: forward chaining with a 7 s embargo, a causal
 validation block embargoed from both fit and test, and every fold boundary
