@@ -427,6 +427,36 @@ class TestBrainTreebank(unittest.TestCase):
         self.assertEqual(lo.shape[-1] // 16, hi.shape[-1] // 25)
 
 
+    def test_task_b_footprint_is_wider_than_task_a(self):
+        """Task B centres a 5 s window, so its overlap footprint is 5.0, not 1.5.
+
+        Passing Task A's 1.5 s to the split for a Task B run would under-embargo
+        every fold boundary and leak.
+        """
+        from data.braintreebank import TILE_SEC, WIN_SEC, EMBARGO_SEC
+        self.assertEqual(WIN_SEC, 5.0)
+        self.assertEqual(TILE_SEC, 1.0)
+        self.assertGreater(EMBARGO_SEC, WIN_SEC,
+                           "embargo must exceed the widest shared footprint")
+
+    def test_brant_fs_guard_fires_on_sub_9(self):
+        """sub_9 records at ~1019 Hz; assuming 2048 doubles Brant's footprint."""
+        from data.braintreebank import assert_brant_fs_fixed
+        assert_brant_fs_fixed(2038.0)          # a normal subject passes
+        with self.assertRaises(AssertionError):
+            assert_brant_fs_fixed(1019.0)      # sub_9 must not pass silently
+
+    def test_both_coordinate_frames_exist(self):
+        """The FM arms select electrodes in voxel space, CORTEG in MNI.
+
+        The two sets differ on several subjects, so mixing them silently changes
+        which electrodes a published number was computed over.
+        """
+        import data.braintreebank as btb
+        self.assertTrue(hasattr(btb, "load_localization"))      # voxel L/I/P
+        self.assertTrue(hasattr(btb, "load_localization_mni"))  # shared MNI mm
+
+
 class TestConfigs(unittest.TestCase):
     def test_configs_declare_a_pretrained_path(self):
         for cfg in sorted((REPO / "configs").glob("*.json")):

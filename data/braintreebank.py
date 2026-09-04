@@ -82,6 +82,29 @@ def load_localization_mni(root, subj):
     return coords
 
 
+def load_localization(root, subj):
+    """name -> (L, I, P) integer voxel coordinates, per-subject FreeSurfer frame.
+
+    These are NOT co-registered across subjects, so they cannot align channels in
+    pooled training -- use ``load_localization_mni`` for that. They are here
+    because the intracranial-FM arms select and re-reference electrodes in this
+    frame, and the published FM numbers depend on that choice: the voxel and MNI
+    electrode sets differ in count on 4 of the 10 subjects.
+    """
+    coords = {}
+    with open(f"{root}/localization/{subj}/depth-wm.csv", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                coords[row["Electrode"]] = (
+                    int(round(float(row["L"]))),
+                    int(round(float(row["I"]))),
+                    int(round(float(row["P"]))),
+                )
+            except (ValueError, KeyError):
+                continue
+    return coords
+
+
 def build_time_to_sample(root, subj, trial):
     """Interp movie_time(sec) -> h5 sample index from the trial timings csv."""
     mt, idx = [], []
@@ -182,6 +205,121 @@ def extract_windows(root, subj, trial, ch_idx, starts_sec, t2s, fs, pre_sec, win
         del sig
     h5.close()
     return x, valid
+
+
+# ---------------------------------------------------------------------------
+# Task B: word vs non-word
+#
+# The second BrainTreebank endpoint, and the upstream Population Transformer
+# benchmark. Positives are word onsets; negatives are non-overlapping 1 s tiles
+# intersecting no word. Both are reported as the WINDOW CENTRE, because upstream
+# centres its 5 s window -- which is also why this arm's overlap footprint is
+# 5.0 s rather than Task A's 1.5 s. Transcribed from PopulationTransformer's
+# data/trial_data_reader.py.
+# ---------------------------------------------------------------------------
+TILE_SEC = 1.0        # upstream interval_duration
+WIN_SEC = 5.0         # upstream duration (centred)
+
+
+def _words(root, movie):
+    lo, hi = [], []
+    with open(f"{root}/transcripts/{movie}/features.csv") as f:
+        for r in csv.DictReader(f):
+            try:
+                a, b = float(r["start"]), float(r["end"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            if np.isfinite(a) and np.isfinite(b) and b > a:
+                lo.append(a); hi.append(b)
+    o = np.argsort(lo)
+    return np.asarray(lo)[o], np.asarray(hi)[o]
+
+
+def _trigger_range(root, subj, trial):
+    mt = []
+    with open(f"{root}/subject_timings/{subj}_{trial}_timings.csv") as f:
+        for r in csv.DictReader(f):
+            try:
+                mt.append(float(r["movie_time"]))
+            except (ValueError, KeyError):
+                continue
+    return float(min(mt)), float(max(mt))
+
+
+def word_nonword_events(root, subj, trial, movie, max_per_class, seed,
+                        tile_sec=TILE_SEC, win_sec=WIN_SEC, neg_mode="upstream",
+                        max_silence_sec=10.0):
+    """Return (event_times, labels, meta). Event time is the WINDOW CENTRE (upstream is centred).
+
+    Positives: word onsets (centre = onset, matching upstream's est_idx alignment).
+    Negatives: non-overlapping `tile_sec` tiles intersecting no word; centre = tile centre.
+    """
+    w_lo, w_hi = _words(root, movie)
+    if w_lo.size == 0:
+        raise RuntimeError(f"no word intervals for {movie}")
+    t0, t1 = _trigger_range(root, subj, trial)
+    half = win_sec / 2.0
+
+    # positives: word onsets whose FULL centred window lies inside the trigger range
+    pos = w_lo[(w_lo - half >= t0) & (w_lo + half <= t1)]
+
+    # negatives: NON-OVERLAPPING tiles (upstream tiles, not a sliding grid)
+    n_tiles = int(np.floor((t1 - t0) / tile_sec))
+    tl = t0 + np.arange(n_tiles) * tile_sec
+    th = tl + tile_sec
+    # keep a tile iff it intersects NO word: a[0] < b[1] and a[1] > b[0]
+    j_hi = np.searchsorted(w_lo, th)            # words starting before tile end
+    j_lo = np.searchsorted(w_hi, tl, "right")   # words ending after tile start
+    clean = j_hi <= j_lo
+    ctr = (tl + th) / 2.0
+    neg_all = ctr[clean]
+    # the 5 s window about the centre must still fit the trigger range
+    neg_all = neg_all[(neg_all - half >= t0) & (neg_all + half <= t1)]
+
+    # how concentrated are the candidates in long silences? (the confound we must report)
+    def silence_len(c):
+        i = np.searchsorted(w_hi, c, "right")
+        left = w_hi[i - 1] if i > 0 else t0
+        j = np.searchsorted(w_lo, c)
+        right = w_lo[j] if j < w_lo.size else t1
+        return right - left
+    sil = np.array([silence_len(c) for c in neg_all]) if neg_all.size else np.array([])
+
+    rng = np.random.RandomState(seed)
+    k = min(pos.size, neg_all.size, int(max_per_class))
+    if k < 50:
+        raise RuntimeError(f"{subj}/{movie}: too few events (pos={pos.size} neg={neg_all.size})")
+
+    if neg_mode == "short_silence" and sil.size:
+        # SECONDARY arm: negatives drawn ONLY from SHORT pauses (< max_silence_sec), so the class is
+        # brief inter-speech gaps rather than end credits. This is the contrast that isolates
+        # speech-vs-silence from "detect the quiet part of the film".
+        #
+        # NOTE: an earlier attempt sampled evenly across silence-length RANK deciles. That is a
+        # no-op -- equal-size rank bins sampled equally reproduce the original distribution exactly
+        # (measured: 0.40 -> 0.39 of negatives in >=20 s silences). Restricting by DURATION works.
+        eligible = np.where(sil < max_silence_sec)[0]
+        if eligible.size < 50:
+            raise RuntimeError(f"only {eligible.size} negatives in silences < {max_silence_sec}s")
+        k = min(k, eligible.size)
+        neg = np.sort(neg_all[rng.permutation(eligible)[:k]])
+    else:
+        neg = np.sort(rng.permutation(neg_all)[:k])
+    pos = np.sort(rng.permutation(pos)[:k])
+
+    times = np.concatenate([pos, neg])
+    labels = np.concatenate([np.ones(k), np.zeros(k)])
+    o = np.argsort(times)                       # temporal order, as every other arm uses
+    sel_sil = np.array([silence_len(c) for c in neg])
+    meta = {
+        "neg_mode": neg_mode, "tile_sec": tile_sec, "win_sec": win_sec,
+        "n_pos_available": int(pos.size), "n_neg_available": int(neg_all.size),
+        "trigger_range": [t0, t1],
+        "neg_in_silence_ge20s_frac": float(np.mean(sel_sil >= 20)) if sel_sil.size else None,
+        "neg_in_silence_gt60s_frac": float(np.mean(sel_sil > 60)) if sel_sil.size else None,
+        "neg_silence_len_median": float(np.median(sel_sil)) if sel_sil.size else None,
+    }
+    return times[o], labels[o], meta
 
 
 # =========================================================================
@@ -418,6 +556,22 @@ def forward_chaining_split(times, win_sec: float, n_folds: int = 4,
     if not out:
         raise ValueError(f"no usable folds for n={n} (too few events for a causal split)")
     return out
+
+
+def assert_brant_fs_fixed(measured_fs: float, nominal_fs: float = 2048.0,
+                          tol: float = 30.0) -> None:
+    """Brant must resample from the MEASURED rate, never a hardcoded 2048 Hz.
+
+    sub_9 records at ~1019 Hz. Treating it as 2048 makes Brant's 250 Hz stream
+    124.4 Hz and its 1500-sample patch span 12.06 s rather than 6.0 -- nearly
+    twice the embargo, and invisible to the overlap check, which is told the
+    footprint is 6.0 s.
+    """
+    if abs(measured_fs - nominal_fs) > tol:
+        raise AssertionError(
+            f"measured fs {measured_fs:.0f} Hz != nominal {nominal_fs:.0f} Hz. Brant's "
+            f"resample must use the measured rate or its true footprint becomes "
+            f"{6.0 * nominal_fs / measured_fs:.2f}s, exceeding EMBARGO_SEC={EMBARGO_SEC}s.")
 
 
 def split_report(times, win_sec: float, train_idx, test_idx, val_idx=None, scheme: str = "") -> dict:
