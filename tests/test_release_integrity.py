@@ -413,6 +413,52 @@ class TestBrainTreebank(unittest.TestCase):
                     problems.append(f"{sh.name}: {label[:60]!r}")
         self.assertEqual(problems, [], f"calls with no backbone: {problems}")
 
+    def test_knn_adapter_starts_from_the_knn_prior(self):
+        """sigma=0 zeroes every Gaussian weight, so the adapter starts uniform.
+
+        Checked as behaviour, not as a literal: build the model the BrainTreebank
+        runner builds and confirm the spatial adapter's initial attention is not
+        one constant across all EEG slots.
+        """
+        import types
+        import numpy as np
+        import torch
+        import paths as paths_mod
+        cfg = REPO / "configs" / "steegformer_small.json"
+        rel = json.loads(cfg.read_text(encoding="utf-8"))["pretrained"]["path"]
+        if not os.path.exists(paths_mod.resolve_pretrained_path(rel)):
+            self.skipTest("ST-EEGFormer backbone not present; see README.md")
+        from experiments.run_btb_classification import build_corteg
+
+        args = types.SimpleNamespace(
+            model_kwargs_json=str(cfg), no_pretrained=False,
+            steegformer_variant="small", merge_strategy="layerwise_gate",
+            layerwise_gate_bottleneck=16, layerwise_gate_act="tanh",
+            head_dropout=0.1, lora_r=4, lora_alpha=16, lora_dropout=0.2,
+            lora_last_n=4)
+        xyz_m = np.random.RandomState(0).randn(24, 3).astype(np.float32) * 0.03
+        model = build_corteg(24, 128, xyz_m, args)
+
+        soft = model.backbone.channel_adapter.soft
+        init = next(p for n, p in soft.named_parameters() if p.dim() >= 2)
+        self.assertGreater(len(torch.unique(init.detach())), 1,
+                           "the spatial adapter's init is a single constant — "
+                           "knn_sigma=0 collapsed the KNN prior")
+
+    def test_event_caches_are_keyed_by_seed(self):
+        """seed and max_per_class choose WHICH events are drawn.
+
+        The paper averages seeds 1, 2 and 42. If they are not in the cache key,
+        all three reuse one event selection while reporting different seeds.
+        """
+        for runner in (BTB_RUNNER, FM_RUNNER):
+            src = runner.read_text(encoding="utf-8")
+            tag = src[src.index("    tag = "):]
+            tag = tag[:tag.index(".npz")]
+            self.assertIn("args.seed", tag, f"{runner.name}: cache key omits the seed")
+            self.assertIn("max_per_class", tag,
+                          f"{runner.name}: cache key omits max_per_class")
+
     def test_canonical_trials_are_not_all_trial000(self):
         """sub_1/2/6 are not trial000; defaulting there scores a different film."""
         import experiments.run_btb_classification as btb
