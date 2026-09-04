@@ -71,8 +71,9 @@ Full table, ablations, and per-subject paired tests: see the paper.
 
 ## Repository scope
 
-This release trains and evaluates **CORTEG on the public Stanford fingerflex
-dataset**, in both fusion variants, and ships the trained adapter.
+This release trains and evaluates **CORTEG on two public datasets** — Stanford
+fingerflex (5-finger regression) and BrainTreebank (sentence-onset detection) —
+in both fusion variants, and ships the trained Stanford adapter.
 
 The **Ghent** speech-envelope dataset is private, is **not** redistributed, and
 no Ghent training code is included. The live demo shows per-subject Ghent
@@ -84,7 +85,7 @@ load_corteg.py        load the released adapter and run it
 paths.py              environment-variable path resolution
 models/steegformer/   ST-EEGFormer backbone, KNNSoftFourier adapter, LoRA
 models/               LaBraM / CBraMod foundation-model baselines
-data/                 Stanford loader, splits, z-score scalers, collate
+data/                 Stanford + BrainTreebank loaders, splits, scalers, collate
 train/                training engine, early stopping, LR schedule
 experiments/          CORTEG runner + baseline runners
 configs/              ST-EEGFormer Small/Base/Large JSONs
@@ -98,10 +99,10 @@ docs/                 live interactive demo (Three.js + Plotly, no backend)
 | --- | --- |
 | Table 1, CORTEG pooled (Stanford) | `scripts/table1_corteg_pooled_stanford.sh` |
 | Table 1, CORTEG LOO-FT | `scripts/table1_corteg_loo_ft.sh <subject>` |
+| Table 3, BrainTreebank | `scripts/table3_corteg_braintreebank.sh` |
 
 Not covered by this release: the intracranial-FM comparison (BrainBERT / PopT /
-Brant), the BrainTreebank benchmark, and the REVE backbone port. Tracked for a
-follow-up.
+Brant) and the REVE backbone port. Tracked for a follow-up.
 
 ## Install
 
@@ -145,6 +146,43 @@ extraction, band-pass 70–200 Hz with Hilbert envelope for the high-gamma strea
 and 1–64 Hz for the low-frequency stream — is documented step by step in
 [`data/stanford_preprocessing/tutorial_Stanford.md`](data/stanford_preprocessing/tutorial_Stanford.md).
 
+### BrainTreebank — public
+
+Sentence-onset detection from sEEG in 10 patients watching films
+(Wang et al., 2024), scored by AUROC. Download (~52 GB) from
+[braintreebank.dev](https://braintreebank.dev/) and point `BTB_DATA_ROOT` at the
+directory holding `all_subject_data/`, `electrode_labels/`, `localization/`,
+`subject_timings/` and `transcripts/`.
+
+The electrode selection is shared with the Population Transformer benchmark so
+the CORTEG and iEEG-FM arms see identical channels. It carries no redistribution
+licence, so it is not vendored here:
+
+```bash
+git clone https://github.com/czlwang/PopulationTransformer
+export POPT_REPO=$PWD/PopulationTransformer
+```
+
+No preprocessing is needed beyond the download: `data/braintreebank.py` reads the
+raw HDF5 and produces the same two streams as Stanford (128 Hz low, 200 Hz
+high-frequency-activity envelope, 8 tokens per electrode each), caching ~260 MB
+per subject on first use. Three details it is careful about, each a real bug
+found during development:
+
+- **Sampling rate is measured per subject, not assumed.** Nine subjects run at
+  2048 Hz; `sub_9` runs at 1019 Hz, and hardcoding 2048 mis-scales every window
+  and frequency band for it.
+- **The scored trial is not always `trial000`.** `sub_1` is `trial001`, `sub_2`
+  is `trial006`, `sub_6` is `trial004` — a different trial is a different film.
+- **Events outside the trigger range are dropped, not clamped.** `np.interp`
+  clamps out-of-range inputs to the end value, collapsing 47 % of `sub_6`'s
+  events onto one identical window, with both labels.
+
+Splits are strictly causal: forward chaining with a 7 s embargo, a causal
+validation block embargoed from both fit and test, and every fold boundary
+asserted free of overlapping windows. Carving validation at random would leak
+through early stopping even when the train/test split is clean.
+
 ### Ghent speech-envelope — private
 
 Continuous audio-envelope regression on 16 patients at Ghent University
@@ -158,6 +196,8 @@ corresponding author to pursue replication.
 | --- | --- | --- |
 | `CORTEG_DATA_ROOT` / `ECOG_DATA_ROOT` | Stanford loader | `~/workspace/datasets/stanford_ecog` |
 | `CORTEG_PRETRAINED_ROOT` / `ECOG_PRETRAINED_ROOT` | backbone checkpoints | `~/workspace/datasets/pretrained_eeg_mae` |
+| `BTB_DATA_ROOT` | BrainTreebank loader | `~/workspace/datasets/braintreebank` |
+| `POPT_REPO` | BrainTreebank electrode selection | *(unset — see above)* |
 | `CORTEG_OUTPUT_ROOT` / `ECOG_OUTPUT_ROOT` | where runs write results | `~/workspace/outputs/corteg` |
 
 CLI flags (`--data_root`, `--save_root`) take precedence over the environment.
@@ -253,6 +293,18 @@ for s in bp cc ht jc jp mv wc wm zt; do bash scripts/table1_corteg_loo_ft.sh $s;
 gated fusion, where a small network emits one scalar per block and each block
 receives `+ g_l · hi`. With `tanh` the gates start at exactly 0, so training
 begins from the low-frequency-only baseline.
+
+**Table 3, BrainTreebank** (sentence onset, 10 subjects × 4 causal folds):
+
+```bash
+export BTB_DATA_ROOT=$HOME/workspace/datasets/braintreebank
+export POPT_REPO=/path/to/PopulationTransformer
+bash scripts/table3_corteg_braintreebank.sh
+```
+
+This runs gated fusion, fixed fusion and the random-init control. The first
+invocation builds the per-subject caches, which is CPU-bound and reads the full
+52 GB tree; later runs reuse them.
 
 **Foundation-model baselines:**
 

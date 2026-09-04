@@ -19,8 +19,18 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 RUNNER = REPO / "experiments" / "run_regression_hilo_clean.py"
-SCRIPTS = sorted((REPO / "scripts").glob("*.sh"))
+BTB_RUNNER = REPO / "experiments" / "run_btb_classification.py"
+ALL_SCRIPTS = sorted((REPO / "scripts").glob("*.sh"))
 RUNNER_CALL = "python -m experiments.run_regression_hilo_clean"
+BTB_RUNNER_CALL = "python -m experiments.run_btb_classification"
+
+# Each script is validated against the runner it actually calls; checking a
+# BrainTreebank script against the Stanford parser reports every BTB flag as
+# unknown.
+SCRIPTS = [s for s in ALL_SCRIPTS
+           if RUNNER_CALL in s.read_text(encoding="utf-8")]
+BTB_SCRIPTS = [s for s in ALL_SCRIPTS
+               if BTB_RUNNER_CALL in s.read_text(encoding="utf-8")]
 
 sys.path.insert(0, str(REPO))
 
@@ -96,7 +106,7 @@ def _functions(text: str):
             for m in re.finditer(r"^(\w+)\(\)\s*\{\n(.*?)^\}", text, re.M | re.S)}
 
 
-def _invocations(text: str):
+def _invocations(text: str, runner_call: str = RUNNER_CALL):
     """Each runner invocation in `text`, with bash expansions resolved.
 
     Handles the direct `python -m experiments...` form and any wrapper function
@@ -106,7 +116,7 @@ def _invocations(text: str):
     array then shows up on every call that used it.
     """
     arrays, funcs = _arrays(text), _functions(text)
-    runners = {n for n, b in funcs.items() if RUNNER_CALL in b}
+    runners = {n for n, b in funcs.items() if runner_call in b}
 
     def expand(s, depth=0):
         if depth > 5:
@@ -123,7 +133,7 @@ def _invocations(text: str):
         if stripped.startswith("#"):
             continue
         called = next((n for n in runners if stripped.startswith(n + " ")), None)
-        starts = RUNNER_CALL in line or called is not None
+        starts = runner_call in line or called is not None
         if starts:
             if started is not None:
                 chunks.append((started, "\n".join(cur)))
@@ -329,6 +339,92 @@ class TestReleasedCheckpoint(unittest.TestCase):
         self.assertEqual(stale, [],
                          "manifest build_args name flags the runner no longer has: "
                          f"{stale} — regenerate the manifest after the cleanup")
+
+
+class TestBrainTreebank(unittest.TestCase):
+    """The BrainTreebank arm: same model, different task and protocol."""
+
+    def test_btb_script_flags_are_known_and_valid(self):
+        spec = parser_spec(BTB_RUNNER)
+        self.assertTrue(BTB_SCRIPTS, "no BrainTreebank script found")
+        problems = []
+        for sh in BTB_SCRIPTS:
+          for flag, val in script_flags(sh.read_text(encoding="utf-8")):
+            if flag not in spec:
+                problems.append(f"{sh.name}: unknown flag {flag}")
+                continue
+            info = spec[flag]
+            if info["store_true"] and val is not None:
+                problems.append(f"{sh.name}: {flag} is store_true but got {val!r}")
+            elif info["choices"] and val is not None and val not in info["choices"]:
+                problems.append(f"{sh.name}: {flag}={val!r} not in {sorted(info['choices'])}")
+        self.assertEqual(problems, [], "\n" + "\n".join(problems))
+
+    def test_every_btb_call_loads_a_backbone(self):
+        """Same defect as Stanford: a run without the config is the ablation."""
+        problems = []
+        for sh in BTB_SCRIPTS:
+            for label, resolved in _invocations(sh.read_text(encoding="utf-8"),
+                                                BTB_RUNNER_CALL):
+                if ("--model_kwargs_json" not in resolved
+                        and "--no_pretrained" not in resolved):
+                    problems.append(f"{sh.name}: {label[:60]!r}")
+        self.assertEqual(problems, [], f"calls with no backbone: {problems}")
+
+    def test_canonical_trials_are_not_all_trial000(self):
+        """sub_1/2/6 are not trial000; defaulting there scores a different film."""
+        import experiments.run_btb_classification as btb
+        self.assertEqual(btb.CANONICAL_TRIAL["sub_1"], "trial001")
+        self.assertEqual(btb.CANONICAL_TRIAL["sub_2"], "trial006")
+        self.assertEqual(btb.CANONICAL_TRIAL["sub_6"], "trial004")
+        self.assertEqual(len(btb.CANONICAL_TRIAL), 10)
+
+    def test_electrode_selection_is_not_vendored(self):
+        """PopT's selection has no redistribution licence; we must only link it."""
+        self.assertEqual(list(REPO.glob("**/clean_laplacian.json")), [],
+                         "PopT electrode selection must not be vendored")
+        import experiments.run_btb_classification as btb
+        os.environ.pop("POPT_REPO", None)
+        with self.assertRaises(SystemExit) as cm:
+            btb.clean_electrodes("sub_3")
+        self.assertIn("PopulationTransformer", str(cm.exception))
+
+    def test_splits_are_causal_and_embargoed(self):
+        """Every fold: fit < val < test, with a gap wider than the embargo.
+
+        The expected gap is the literal 7.0 s, NOT the imported EMBARGO_SEC:
+        asserting against the constant means lowering the constant also lowers
+        the assertion, and zeroing the embargo passes silently.
+        """
+        import numpy as np
+        from data.braintreebank import forward_chaining_split, EMBARGO_SEC
+        EXPECTED_EMBARGO = 7.0
+        self.assertEqual(EMBARGO_SEC, EXPECTED_EMBARGO,
+                         "embargo changed; the widest shared arm is Brant L=1 at 6.11 s")
+        times = np.sort(np.random.RandomState(0).uniform(0, 7200, 1800))
+        folds = forward_chaining_split(times, win_sec=1.5, n_folds=4, val_frac=0.15)
+        self.assertGreaterEqual(len(folds), 1)
+        for i, (fit, val, te) in enumerate(folds):
+            self.assertLess(times[fit].max(), times[val].min(), f"fold {i} fit/val")
+            self.assertLess(times[val].max(), times[te].min(), f"fold {i} val/test")
+            self.assertGreater(times[val].min() - times[fit].max(), EXPECTED_EMBARGO)
+            self.assertGreater(times[te].min() - times[val].max(), EXPECTED_EMBARGO)
+
+    def test_leakage_is_detected(self):
+        """The overlap assertion must fire on a deliberately leaking split."""
+        import numpy as np
+        from data.braintreebank import assert_no_window_overlap
+        times = np.arange(0, 100, 0.5)          # 0.5 s apart, 1.5 s windows
+        with self.assertRaises(AssertionError):
+            assert_no_window_overlap(times, 1.5, np.arange(0, 50), np.arange(50, 200))
+
+    def test_streams_yield_equal_token_counts(self):
+        """128/16 == 200/25: the two streams must be fusable."""
+        import numpy as np
+        from data.braintreebank import corteg_features
+        x = np.random.RandomState(0).randn(2, 4, int(1.5 * 2048)).astype(np.float32)
+        lo, hi = corteg_features(x, fs=2048.0)
+        self.assertEqual(lo.shape[-1] // 16, hi.shape[-1] // 25)
 
 
 class TestConfigs(unittest.TestCase):
