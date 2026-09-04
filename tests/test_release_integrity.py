@@ -495,7 +495,7 @@ class TestIeegFm(unittest.TestCase):
         """No accessor may fall back to a path on the author's machine."""
         import ieeg_fm
         for getter in ("brainbert_repo", "brainbert_weights", "popt_repo",
-                       "brant_src", "brant_weights"):
+                       "brant_src_dir", "brant_weights_dir"):
             for var in ("BRAINBERT_REPO", "BRAINBERT_WEIGHTS", "POPT_REPO",
                         "BRANT_SRC", "BRANT_WEIGHTS"):
                 os.environ.pop(var, None)
@@ -507,6 +507,28 @@ class TestIeegFm(unittest.TestCase):
         from experiments.run_ieeg_fm_baselines import ENDPOINTS
         self.assertEqual(ENDPOINTS["sentence_onset"]["win_sec"], 1.5)
         self.assertEqual(ENDPOINTS["word_nonword"]["win_sec"], 5.0)
+
+    def test_brant_gets_its_native_context(self):
+        """Brant's patch is 6 s; a 1.5 s window would be zero-padded silently.
+
+        The 6 s window is also what sizes the shared embargo: its footprint is
+        6.11 s once the resampler's filter edge is counted, and EMBARGO_SEC is 7.0.
+        """
+        from data.braintreebank import EMBARGO_SEC
+        from experiments.run_ieeg_fm_baselines import BRANT_WINDOW, window_for
+        import ieeg_fm
+
+        self.assertEqual(BRANT_WINDOW["win_sec"], 6.0)
+        self.assertEqual(BRANT_WINDOW["pre_sec"], -4.5)
+        # one full patch, exactly
+        self.assertEqual(ieeg_fm.BRANT_PATCH_LEN / ieeg_fm.BRANT_FS,
+                         BRANT_WINDOW["win_sec"])
+        # Brant ignores the endpoint window; the other arms do not
+        for ep in ("sentence_onset", "word_nonword"):
+            self.assertEqual(window_for("brant", ep), BRANT_WINDOW)
+            self.assertNotEqual(window_for("brainbert", ep), BRANT_WINDOW)
+        self.assertGreater(EMBARGO_SEC, BRANT_WINDOW["win_sec"] + 0.11,
+                           "embargo must exceed Brant's footprint incl. filter edge")
 
     def test_oracle_arm_ships_its_caveat(self):
         """single_elec_max is an oracle; every place that says so must keep saying it.

@@ -66,6 +66,17 @@ ENDPOINTS = {
     "word_nonword": {"win_sec": 5.0, "pre_sec": -2.5},
 }
 
+# Brant's atomic unit is a 6 s patch at 250 Hz, longer than either task window, so
+# it is given its native context instead: [t-4.5, t+1.5]. That is the paper's
+# configuration, and its 6.11 s footprint (including the resampler's filter edge)
+# is what sizes the 7 s embargo everything else also uses.
+BRANT_WINDOW = {"win_sec": 6.0, "pre_sec": -4.5}
+
+
+def window_for(fm: str, endpoint: str) -> dict:
+    """The window an arm reads, and therefore its overlap footprint."""
+    return BRANT_WINDOW if fm == "brant" else ENDPOINTS[endpoint]
+
 
 def subject_embeddings(subj: str, args):
     """(embeddings, labels, event_times) for one subject, cached as an npz.
@@ -74,7 +85,7 @@ def subject_embeddings(subj: str, args):
     the model, endpoint and window, because a cache built under different
     settings is silently wrong for every number downstream.
     """
-    ep = ENDPOINTS[args.endpoint]
+    ep = window_for(args.fm, args.endpoint)
     root = btb_root()
     trial = args.trial or trial_of(root, subj)
     tag = f"fm_{args.fm}_{args.endpoint}_{subj}_{trial}_win{ep['win_sec']}.npz"
@@ -117,10 +128,10 @@ def subject_embeddings(subj: str, args):
             x_raw, fs=fs, xyz_mm=xyz, device=args.device,
             reref="laplacian_xyz", pool="default", batch_size=args.batch_size)
     elif args.fm == "brant":
-        emb = ieeg_fm.brant_embeddings(x_raw, fs=int(round(fs)),
-                                       device=args.device, batch_size=args.batch_size)
+        emb = ieeg_fm.brant_embeddings(x_raw, fs=fs, device=args.device,
+                                       batch_size=args.batch_size)
     else:
-        emb = ieeg_fm.popt_embeddings(x_raw, fs=fs, xyz_mm=xyz,
+        emb = ieeg_fm.popt_embeddings(x_raw, xyz, fs=fs,
                                       device=args.device, batch_size=args.batch_size)
     emb = np.asarray(emb, dtype=np.float32)
     os.makedirs(os.path.dirname(cache), exist_ok=True)
@@ -184,7 +195,7 @@ def main():
     p.add_argument("--save_root", default="")
     args = p.parse_args()
 
-    ep = ENDPOINTS[args.endpoint]
+    ep = window_for(args.fm, args.endpoint)
     save_root = args.save_root or os.path.join(btb_output_root(), "fm_runs")
     os.makedirs(save_root, exist_ok=True)
 

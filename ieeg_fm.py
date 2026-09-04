@@ -127,12 +127,17 @@ def popt_repo() -> str:
     return _env_path("POPT_REPO", "The Population Transformer repository")
 
 
-def brant_src() -> str:
+def brant_src_dir() -> str:
     return _env_path("BRANT_SRC", "Brant_src/ from the Brant model card")
 
 
-def brant_weights() -> str:
-    return _env_path("BRANT_WEIGHTS", "The Brant checkpoint")
+def brant_weights_dir() -> str:
+    """Directory holding time_encoder.pt and channel_encoder.pt.
+
+    The released weights are two separate encoder files, not one state_dict.
+    """
+    return _env_path("BRANT_WEIGHTS", "The Brant weights directory "
+                                      "(time_encoder.pt + channel_encoder.pt)")
 
 
 def _ensure_repo_on_path() -> None:
@@ -568,34 +573,19 @@ def mni_mm_to_lip_indices(
 # Per-electrode BrainBERT embeddings (sibling adapter)
 # --------------------------------------------------------------------------- #
 def _brainbert_per_electrode_embeddings(
-    x_raw: np.ndarray, fs: int, device: str
+    x_raw: np.ndarray, fs: int, device: str, xyz_mm=None, batch_size: int = 64
 ) -> np.ndarray:
-    """Get per-electrode BrainBERT embeddings (N, C, 768) via the sibling adapter.
+    """Per-electrode BrainBERT embeddings, (N, C, 768).
 
-    Expects `external_fms/adapters/extract_brainbert.py` to expose
-    `extract_embeddings(x_raw, fs, device)`.
-
-    TODO(sibling): if the BrainBERT adapter's signature/return shape differs from the
-    assumption below, adjust this shim. Accepted return shapes:
-        (N, C, 768)  -> used as-is
-        (C, 768)     -> treated as a single window (N==1)
-        (N*C, 768)   -> reshaped if `_n`/`_c` recoverable (not assumed here)
+    PopT is defined over frozen BrainBERT embeddings, so it calls straight into
+    the BrainBERT section of this module. It used to import a sibling
+    `external_fms/adapters/extract_brainbert.py`, which does not exist here --
+    that import could only ever raise.
     """
-    try:
-        from external_fms.adapters.extract_brainbert import extract_embeddings  # type: ignore
-    except Exception:
-        try:
-            # Fallback if adapters dir is on sys.path directly.
-            from extract_brainbert import extract_embeddings  # type: ignore
-        except Exception as e:
-            raise ImportError(
-                "TODO: BrainBERT adapter not found. Expected "
-                "`external_fms/adapters/extract_brainbert.py` exposing "
-                "`extract_embeddings(x_raw, fs, device) -> (N, C, 768)`. "
-                f"Underlying error: {e}"
-            )
-
-    emb = extract_embeddings(x_raw, fs, device)
+    emb = brainbert_embeddings(
+        x_raw, fs=fs, xyz_mm=xyz_mm, device=device,
+        reref="laplacian_xyz" if xyz_mm is not None else "car",
+        pool="default", batch_size=batch_size)
     if torch is not None and isinstance(emb, torch.Tensor):
         emb = emb.detach().cpu().numpy()
     emb = np.asarray(emb)
@@ -664,7 +654,11 @@ def popt_embeddings(
                 f"per_electrode_embeddings must be {(N, C, POPT_INPUT_DIM)}, got {emb.shape}"
             )
     else:
-        emb = _brainbert_per_electrode_embeddings(x_raw, fs, device)
+        # Pass the coordinates through: BrainBERT re-references Laplacian over
+        # electrode neighbours, and omitting them silently falls back to CAR,
+        # which is not what the published PopT numbers used.
+        emb = _brainbert_per_electrode_embeddings(
+            x_raw, fs, device, xyz_mm=xyz, batch_size=batch_size)
         if emb.shape[0] != N or emb.shape[1] != C:
             raise ValueError(
                 f"BrainBERT embeddings {emb.shape} do not match (N={N}, C={C})."
@@ -714,327 +708,205 @@ def popt_embeddings(
 
 # ==========================================================================
 # Brant — 505 M-parameter iEEG foundation model
+#
+# Uses the OFFICIAL Brant_src/pretrain/pre_model.py. The released weights are two
+# separate encoder files (time_encoder.pt + channel_encoder.pt), not one
+# state_dict, so nothing but the official module is key-compatible with them. An
+# earlier reconstruction of the architecture loaded them with strict=False,
+# printed a warning that the result was effectively random-init, and returned the
+# model anyway -- exactly the warn-and-continue failure this repository exists to
+# remove. That path is gone; a mismatch now raises.
 # ==========================================================================
 
-BRANT_HF_REPO = "Daoze/Brant"
-BRANT_SRC_SUBDIR = "Brant_src"                       # contains the official model code
-BRANT_PRE_MODEL = "Brant_src/pretrain/pre_model.py"  # official architecture
-BRANT_PRE_UTILS = "Brant_src/pretrain/pre_utils.py"  # official PSD power calc
-BRANT_EMB_FN = "Brant_src/utils.py:get_emb"          # official embedding helper (per model card)
-
-# Local checkpoint path (set after you download the .pth from the Google-Drive link).
-# Override with env var BRANT_WEIGHTS or the --weights CLI flag.
-# Resolved lazily through brant_weights(); see the module docstring.
-# Approx checkpoint size: Brant is >500M params (505.69M in Fig.1). fp32 -> ~2.0 GB.
-BRANT_PARAM_COUNT_M = 505.69
-
-# ----------------------------------------------------------------------------
-# Brant fixed hyper-parameters (from the paper — do NOT change for a fair baseline)
-# ----------------------------------------------------------------------------
-BRANT_FS = 250            # Hz, pretrain sampling rate
-BRANT_PATCH_LEN = 1500    # M, samples per patch (6 s @ 250 Hz)
-BRANT_PATCH_STRIDE = 1500 # S, non-overlapping (stride == patch len)
-BRANT_D_MODEL = 2048      # D, embedding dim (temporal & spatial encoders)
-BRANT_TEMPORAL_LAYERS = 12
-BRANT_SPATIAL_LAYERS = 5
-BRANT_FFN = 3072
-BRANT_HEADS = 16
-BRANT_N_BANDS = 8
-
-# 8 PSD bands (Hz) — exactly as in the paper "Frequency encoding" paragraph.
-BRANT_BANDS_HZ = (
-    (4.0, 8.0),     # theta
-    (8.0, 13.0),    # alpha
-    (13.0, 30.0),   # beta
-    (30.0, 50.0),   # gamma1
-    (50.0, 70.0),   # gamma2
-    (70.0, 90.0),   # gamma3
-    (90.0, 110.0),  # gamma4
-    (110.0, 128.0), # gamma5
-)
-
-# Flip to True once the official Brant_src/pretrain/pre_model.py + pre_utils.py are
-# placed alongside this file (or importable) so the released checkpoint loads exactly.
+BRANT_FS = 250            # pretrain sampling rate (Hz)
+BRANT_PATCH_LEN = 1500    # samples per patch (6.0 s @ 250 Hz), the fixed atomic unit
+BRANT_MAX_PATCHES = 15    # pretrain max L == positional-encoding rows
+BRANT_D_MODEL = 2048
 
 
-def resample_to_brant_fs(x: np.ndarray, fs: int) -> np.ndarray:
-    """Resample (N, C, T) from `fs` Hz to BRANT_FS (250 Hz) along the time axis.
+def load_brant(brant_src: str, weights_dir: str, device: str, n_patches: int = 1):
+    """Instantiate the OFFICIAL Brant TimeEncoder + ChannelEncoder and load the
+    released pretrained weights strictly (0 missing / 0 unexpected).
 
-    Uses scipy.signal.resample (Fourier method). This is the documented fairness
-    bridge for fs mismatch — Brant was pretrained at 250 Hz; our data is 128 Hz.
+    The official code lives in <brant_src> and <brant_src>/pretrain; we add both to
+    sys.path and import `pretrain.pre_model`. We do NOT import Brant_src/utils.py
+    (it needs torchmetrics); the embedding fn is inlined (get_emb) below.
+
+    `n_patches` (L): the official InputEmbedding.forward adds the FULL (15, 2048)
+    positional encoding (`input_emb += self.positional_encoding`), which only
+    broadcasts correctly when the data carries exactly 15 patches. For L < 15 the
+    documented fix is to use `positional_encoding[:seq_len]`; we implement that by
+    slicing the PE PARAMETER to its first L rows at load time (equivalent, and it
+    keeps the official forward byte-unchanged). L=1 (default) => one 6 s patch.
     """
-    if fs == BRANT_FS:
-        return x.astype(np.float32, copy=False)
-    from scipy.signal import resample
+    for p in (brant_src, os.path.join(brant_src, "pretrain")):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    from pretrain.pre_model import TimeEncoder, ChannelEncoder  # official
 
-    N, C, T = x.shape
-    T_new = int(round(T * BRANT_FS / fs))
-    out = resample(x.astype(np.float64), T_new, axis=-1)
-    return out.astype(np.float32)
+    et = TimeEncoder(in_dim=1500, d_model=2048, dim_feedforward=3072, seq_len=15,
+                     n_layer=12, nhead=16, band_num=8, project_mode='linear',
+                     learnable_mask=True)
+    ec = ChannelEncoder(out_dim=1500, d_model=2048, dim_feedforward=3072,
+                        n_layer=5, nhead=16)
 
+    def _strip(sd):
+        sd = sd.get("state_dict", sd) if isinstance(sd, dict) else sd
+        return {(k[7:] if k.startswith("module.") else k): v for k, v in sd.items()}
 
-def make_patches(x_250: np.ndarray) -> np.ndarray:
-    """Cut (N, C, T) @250Hz into Brant patches -> (N, L, C, M).
-
-    M = BRANT_PATCH_LEN (1500), stride S = BRANT_PATCH_STRIDE (1500).
-    L = floor((T - M) / S) + 1 if T >= M, else 0.
-
-    NOTE: Our 1-s windows resampled to 250 Hz are only 250 samples < M=1500, so a
-    *single* window yields L=0 patches. We zero-pad the tail up to one full patch
-    (M samples) so that L >= 1. This pads ~1250 samples of zeros per 6-s patch
-    (see FAIRNESS — this is the central preprocessing risk for short-window data).
-    """
-    N, C, T = x_250.shape
-    M, S = BRANT_PATCH_LEN, BRANT_PATCH_STRIDE
-    if T < M:
-        pad = M - T
-        x_250 = np.pad(x_250, ((0, 0), (0, 0), (0, pad)), mode="constant")
-        T = M
-    L = (T - M) // S + 1
-    patches = np.empty((N, L, C, M), dtype=np.float32)
-    for li in range(L):
-        s = li * S
-        patches[:, li] = x_250[:, :, s : s + M]
-    return patches
-
-
-def band_log_psd(patches: np.ndarray, fs: int = BRANT_FS) -> np.ndarray:
-    """Compute the 8-band log-PSD power weights for every patch (Eq.1).
-
-    Input  : patches (N, L, C, M)
-    Output : (N, L, C, 8)  =  P(i) = log( sum_{w in band(i)} PSD(w) ) for i=1..8.
-
-    # TODO(official-code): the paper (Eq.1) only specifies P(i)=log sum PSD(w);
-    # the exact PSD estimator (Welch window length / overlap / detrend) is defined
-    # in Brant_src/pretrain/pre_utils.py (GATED). We use scipy.signal.welch with a
-    # full-patch window (nperseg=M) Hann, which is the standard single-segment PSD
-    # and is the most faithful default for a fixed-length patch. Confirm against
-    # pre_utils.py once HF access is granted.
-    """
-    from scipy.signal import welch
-
-    N, L, C, M = patches.shape
-    flat = patches.reshape(-1, M)
-    # nperseg = M -> single Hann-windowed periodogram per patch (no averaging).
-    freqs, psd = welch(flat, fs=fs, nperseg=M, noverlap=0, detrend="constant", axis=-1)
-    out = np.empty((flat.shape[0], BRANT_N_BANDS), dtype=np.float32)
-    eps = 1e-12
-    for i, (lo, hi) in enumerate(BRANT_BANDS_HZ):
-        m = (freqs >= lo) & (freqs < hi)
-        band_sum = psd[:, m].sum(axis=-1)
-        out[:, i] = np.log(band_sum + eps)
-    return out.reshape(N, L, C, BRANT_N_BANDS)
-
-
-# ============================================================================
-# Reconstructed Brant model (paper-faithful; load-compatible pending official code)
-# ============================================================================
-if torch is not None:
-
-    class _TransformerEncoderStack(nn.Module):
-        def __init__(self, depth: int):
-            super().__init__()
-            layer = nn.TransformerEncoderLayer(
-                d_model=BRANT_D_MODEL,
-                nhead=BRANT_HEADS,
-                dim_feedforward=BRANT_FFN,
-                batch_first=True,
-                norm_first=False,
-                activation="gelu",
-            )
-            self.enc = nn.TransformerEncoder(layer, num_layers=depth)
-
-        def forward(self, x):  # x: (B, seq, D)
-            return self.enc(x)
-
-    class BrantReconstructed(nn.Module):
-        """Paper-faithful Brant encoder (Eqs.1-3, Sec.2).
-
-        Forward: patches (B, L, C, M) + band_logpsd (B, L, C, 8) -> z (B, L, C, D).
-
-        WARNING: random-init unless the official checkpoint is mapped onto these
-        modules. Used by --self_test for shape validation only.
-        # TODO(official-code): align module names with pre_model.py so the released
-        # state_dict loads. Likely the official names differ (e.g. patch_embed,
-        # band_embed, temporal_transformer, spatial_transformer).
-        """
-
-        def __init__(self):
-            super().__init__()
-            self.w_proj = nn.Linear(BRANT_PATCH_LEN, BRANT_D_MODEL)        # W_proj (Eq.3)
-            self.band_embed = nn.Parameter(torch.randn(BRANT_N_BANDS, BRANT_D_MODEL))  # f_i (Eq.2)
-            # W_pos is (L, D); L is data-dependent, so use a generous max and slice.
-            self._max_L = 64
-            self.w_pos = nn.Parameter(torch.randn(self._max_L, BRANT_D_MODEL))
-            self.temporal_encoder = _TransformerEncoderStack(BRANT_TEMPORAL_LAYERS)
-            self.spatial_encoder = _TransformerEncoderStack(BRANT_SPATIAL_LAYERS)
-
-        def freq_encoding(self, band_logpsd):  # (B, L, C, 8) -> (B, L, C, D)
-            w = F.softmax(band_logpsd, dim=-1)            # softmax over 8 bands (Eq.2)
-            return torch.einsum("blck,kd->blcd", w, self.band_embed)
-
-        def forward(self, patches, band_logpsd):
-            B, L, C, M = patches.shape
-            assert L <= self._max_L, f"L={L} exceeds max positional length {self._max_L}"
-            proj = self.w_proj(patches)                   # (B, L, C, D)
-            pos = self.w_pos[:L].view(1, L, 1, BRANT_D_MODEL)
-            freq = self.freq_encoding(band_logpsd)        # (B, L, C, D)
-            h_in = proj + pos + freq                      # input encoding (Eq.3)
-
-            # Temporal encoder: attend over the L patches within each channel.
-            ht = h_in.permute(0, 2, 1, 3).reshape(B * C, L, BRANT_D_MODEL)
-            ht = self.temporal_encoder(ht)
-            ht = ht.reshape(B, C, L, BRANT_D_MODEL).permute(0, 2, 1, 3)  # (B, L, C, D)
-
-            # Spatial encoder: for each time index, attend over the C channels.
-            hs = ht.reshape(B * L, C, BRANT_D_MODEL)
-            hs = self.spatial_encoder(hs)
-            z = hs.reshape(B, L, C, BRANT_D_MODEL)        # final repr z (Sec.2)
-            return z
-
-
-def _load_brant_model(weights: str, device: str, allow_random_init: bool = False):
-    """Build Brant and load the pretrained checkpoint.
-
-    If `_USE_OFFICIAL_CODE`, import the official pre_model.py (drop it next to this
-    file or make it importable) and load the released state_dict exactly. Otherwise
-    fall back to the reconstructed module (random init unless a compatible state_dict
-    is supplied) — only valid for shape testing.
-
-    Weights-absent policy: a REAL run (allow_random_init=False, the default) HARD-FAILS
-    with a clear FileNotFoundError so random-init numbers can never be reported as a
-    baseline. Only the shape/wiring paths (self_test, or the runner's explicit
-    --debug_brant_random_init) pass allow_random_init=True to permit random init.
-    """
-    weights = weights or brant_weights()
-    if _USE_OFFICIAL_CODE:
-        # TODO(official-code): from Brant_src.pretrain.pre_model import Brant (or similar)
-        #   model = Brant(**cfg); ckpt = torch.load(weights, map_location="cpu")
-        #   model.load_state_dict(ckpt["model"] or ckpt)  # exact key TBD
-        raise NotImplementedError(
-            "Set up official Brant_src/pretrain/pre_model.py first; see BRANT_SETUP.md."
-        )
-    have_weights = bool(weights) and os.path.exists(weights)
-    # Fail BEFORE building the ~505M-param model so a real run with an absent
-    # checkpoint errors fast (and never silently reports random-init numbers).
-    if not have_weights and not allow_random_init:
+    tp = os.path.join(weights_dir, "time_encoder.pt")
+    cp = os.path.join(weights_dir, "channel_encoder.pt")
+    if not (os.path.exists(tp) and os.path.exists(cp)):
         raise FileNotFoundError(
-            f"Brant weights not found at '{weights}'; see external_fms/BRANT_SETUP.md "
-            f"to obtain the gated checkpoint (HF Daoze/Brant + Google-Drive .pth) and "
-            f"set --weights / $BRANT_WEIGHTS. Pass allow_random_init=True (runner: "
-            f"--debug_brant_random_init) ONLY for shape validation, never for reported "
-            f"numbers."
-        )
-    state = None
-    if have_weights:
-        # torch.load BEFORE building the ~505M-param model so a corrupt / wrong-format
-        # checkpoint also fails fast. NOTE: the released Brant weights ship as a zip
-        # of TWO separate encoder .pt files (pre_trained_weights/time_encoder.pt +
-        # channel_encoder.pt), NOT a single state_dict — so a plain torch.load of that
-        # .pth raises here. Real loading of the two-encoder format requires the
-        # official Brant_src/pretrain/pre_model.py (set _USE_OFFICIAL_CODE=True); see
-        # BRANT_SETUP.md.
-        try:
-            ckpt = torch.load(weights, map_location="cpu")
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to torch.load Brant checkpoint '{weights}' ({type(e).__name__}: "
-                f"{e}). The released weights are a zip of two encoder .pt files "
-                f"(time_encoder.pt + channel_encoder.pt), not a single state_dict, and "
-                f"the reconstructed module is not key-compatible — set "
-                f"_USE_OFFICIAL_CODE=True with the official pre_model.py to load them "
-                f"(see external_fms/BRANT_SETUP.md). For a shape check only, pass "
-                f"allow_random_init=True (runner: --debug_brant_random_init)."
-            ) from e
-        state = ckpt.get("model", ckpt) if isinstance(ckpt, dict) else ckpt
+            f"Brant weights not found under {weights_dir} "
+            f"(need time_encoder.pt + channel_encoder.pt)")
+    r1 = et.load_state_dict(_strip(torch.load(tp, map_location="cpu")), strict=True)
+    r2 = ec.load_state_dict(_strip(torch.load(cp, map_location="cpu")), strict=True)
+    n_params = (sum(p.numel() for p in et.parameters())
+                + sum(p.numel() for p in ec.parameters())) / 1e6
+    print(f"  [brant] strict load OK: time_encoder={r1}, channel_encoder={r2}")
+    print(f"  [brant] params={n_params:.2f}M (paper: 505.69M)")
 
-    model = BrantReconstructed().to(device).eval()
-    if state is not None:
-        missing, unexpected = model.load_state_dict(state, strict=False)
-        if missing or unexpected:
-            print(
-                f"[extract_brant] WARNING load_state_dict strict=False: "
-                f"{len(missing)} missing, {len(unexpected)} unexpected keys. "
-                f"Reconstructed module is NOT key-compatible with the official "
-                f"checkpoint — set _USE_OFFICIAL_CODE=True and drop in the official "
-                f"Brant_src/pretrain/pre_model.py (see BRANT_SETUP.md). Until then these "
-                f"embeddings are effectively RANDOM-INIT and NOT a valid baseline."
-            )
+    # PE-slice fix so L != 15 forwards run (official forward adds full (15,2048) PE).
+    L = int(n_patches)
+    if not (1 <= L <= BRANT_MAX_PATCHES):
+        raise ValueError(f"--context_patches must be in [1,{BRANT_MAX_PATCHES}], got {L}")
+    pe = et.input_embedding.positional_encoding
+    if L != BRANT_MAX_PATCHES:
+        et.input_embedding.positional_encoding = nn.Parameter(
+            pe.data[:L].clone(), requires_grad=False)
+        print(f"  [brant] sliced positional_encoding {tuple(pe.shape)} -> ({L}, 2048) "
+              f"(== official PE[:seq_len] for L={L} < 15)")
+    et = et.to(device).eval()
+    ec = ec.to(device).eval()
+    return et, ec
+
+
+def compute_power(data: np.ndarray, fs: int = BRANT_FS) -> np.ndarray:
+    """Brant's exact 8-band log10-PSD power (pre_utils.py::compute_power, verbatim,
+    only fixing the intended `scipy.signal` import). data (..., M) -> (..., 8).
+
+    P(i) = log10( sum_{w in band(i)} periodogram_PSD(w) + 1 ), bands split at
+    [4,8,13,30,50,70,90,110,128] Hz. Matches the distribution the pretrained
+    band-embeddings + softmax expect — using this verbatim is the FAIR choice.
+    """
+    from scipy import signal as sig
+    f, Pxx = sig.periodogram(data, fs)
+    f_thres = [4, 8, 13, 30, 50, 70, 90, 110, 128]
+    poses = []
+    for fi in range(len(f_thres) - 1):
+        c1 = np.where(f_thres[fi] < f)[0]
+        c2 = np.where(f_thres[fi + 1] >= f)[0]
+        poses.append(np.intersect1d(c1, c2))
+    ori = Pxx.shape[:-1]
+    Pxx = Pxx.reshape(-1, len(f))
+    bs = [np.sum(Pxx[:, bp], axis=-1) + 1 for bp in poses]
+    bs = [np.log10(x)[:, np.newaxis] for x in bs]
+    bs = np.concatenate(bs, axis=-1)
+    return bs.reshape(ori + (8,))
+
+
+def _get_emb(x: torch.Tensor, power: torch.Tensor, et, ec) -> torch.Tensor:
+    """Inlined official embedding fn (per the Brant model card / utils.py:get_emb,
+    without importing utils.py). x (B,C,15,1500), power (B,C,15,8) -> (B,C,15,2048).
+
+    DIFFERENTIABLE. `get_emb` below is the no-grad wrapper the frozen arm uses; the
+    fine-tuning arm must call THIS one, or the trunk output carries grad_fn=None and every
+    LoRA / full-FT parameter silently receives grad=None -- i.e. `lora` and `full_ft`
+    degenerate into the frozen probe while still reporting themselves as adapted.
+    """
+    b, c, s, seg = x.shape
+    tz = et(mask=None, data=x, power=power, need_mask=False)      # (B*C, 15, 2048)
+    d = tz.shape[-1]
+    tz = tz.reshape(b, c, s, d).transpose(1, 2).reshape(b * s, c, d)  # (B*15, C, 2048)
+    emb, _ = ec(tz)                                               # (B*15, C, 2048)
+    return emb.reshape(b, s, c, d).transpose(1, 2)               # (B, C, 15, 2048)
+
+
+#: The frozen arm's entry point -- identical behaviour to the pre-2026-08-10 decorated
+#: function, so btb_brant_arm.py and every frozen artifact are unaffected. Kept as a wrapper
+#: rather than a second implementation so the two paths cannot drift apart.
+get_emb = torch.no_grad()(_get_emb)
+
+
+# ===========================================================================
+# Continuous-stream loaders (stream + right-edge indices + targets), per subject
+# ===========================================================================
+
+
+def _context_patches(stream250: np.ndarray, end250: int, n_patches: int
+                     ) -> Tuple[np.ndarray, bool]:
+    """Build one anchor's (C, L, 1500) patch tensor: the L*1500 samples ENDING at
+    end250 (exclusive), cut into L temporal 6 s patches (patch 0 oldest, L-1 newest,
+    ending exactly at the target). If fewer real samples precede end250, the front is
+    LEFT-FILLED by tiling the available real signal (np.pad mode='wrap') — never
+    zeros. For the default L=1 this is simply the real 6 s window ending at the
+    target. Returns (patches, padded?).
+    """
+    ctx_samples = int(n_patches) * BRANT_PATCH_LEN
+    T = stream250.shape[0]
+    end250 = int(min(max(end250, 1), T))
+    lo = end250 - ctx_samples
+    if lo >= 0:
+        ctx = stream250[lo:end250]                                    # (ctx_samples, C)
+        padded = False
     else:
-        print(
-            f"[extract_brant] WARNING: no weights at '{weights}'. Using RANDOM-INIT "
-            f"Brant — embeddings are NOT a valid baseline (wiring/shape check only)."
-        )
-    return model
+        avail = stream250[0:end250]                                   # (<ctx_samples, C)
+        pad = ctx_samples - avail.shape[0]
+        # tile REAL available signal to fill the front; 'wrap' works for any pad size
+        ctx = np.pad(avail, ((pad, 0), (0, 0)), mode="wrap")
+        padded = True
+    C = ctx.shape[1]
+    # (ctx_samples, C) -> (C, ctx_samples) -> (C, L, 1500): patch 0 oldest, L-1 newest
+    return np.ascontiguousarray(ctx.T).reshape(C, int(n_patches), BRANT_PATCH_LEN), padded
 
 
-# ============================================================================
-# Public API
-# ============================================================================
-@torch.no_grad() if torch is not None else (lambda f: f)
-def brant_embeddings(
-    x_raw: np.ndarray,
-    fs: int = 128,
-    device: Optional[str] = None,
-    weights: str = "",
-    batch_size: int = 8,
-    allow_random_init: bool = False,
-) -> np.ndarray:
-    """Extract frozen-Brant embeddings from our ECoG windows.
+
+
+def brant_embeddings(x_raw: np.ndarray, fs: float, device: str = "cuda",
+                     brant_src: str = "", weights_dir: str = "",
+                     batch_size: int = 8) -> np.ndarray:
+    """Frozen Brant embeddings, (N, C, 2048).
+
+    Brant's atomic unit is a 1500-sample patch at 250 Hz, i.e. **6 seconds**. That
+    is longer than the 1.5 s window the other arms use, so windows handed to this
+    function must already carry Brant's native context -- the paper's arm reads
+    [t-4.5, t+1.5] for exactly this reason, giving one full patch and a 6.11 s
+    footprint once the resampler's filter edge is counted. Passing a shorter
+    window would zero-pad the patch and quietly measure something else, so it
+    raises instead.
 
     Args:
-        x_raw : (N, C, T) raw ECoG (Stanford T=128 @128Hz; Ghent C-chan @128Hz).
-        fs    : sampling rate of x_raw (default 128). Resampled to 250 Hz internally.
-        device: "cuda" / "cpu" (auto if None).
-        weights: path to the pretrained Brant .pth (Google-Drive download).
-        batch_size: windows per forward pass (Brant is large; keep small).
-        allow_random_init: if True, permit RANDOM-INIT Brant when `weights` is absent
-            (shape/wiring validation only). Default False -> a missing checkpoint is a
-            hard FileNotFoundError so random numbers can't be reported as a baseline.
-
-    Returns:
-        z : np.ndarray, shape (N, L, C, 2048).  L = #patches/window (1 for our 1-s
-            windows after 250 Hz resample + tail-pad). Pool with `pool_embeddings`.
+        x_raw: (N, C, T) raw windows at `fs` Hz, T >= 6 s worth.
+        fs: MEASURED sampling rate. Never assume 2048 -- sub_9 runs at ~1019 Hz,
+            and assuming otherwise stretches the patch to 12 s, past the embargo.
     """
-    if torch is None:
-        raise RuntimeError("PyTorch not available; cannot run Brant.")
-    assert x_raw.ndim == 3, f"expected (N,C,T), got {x_raw.shape}"
-    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    from scipy.signal import resample_poly
 
-    x250 = resample_to_brant_fs(x_raw, fs)        # (N, C, T')
-    patches = make_patches(x250)                  # (N, L, C, M)
-    blogpsd = band_log_psd(patches)               # (N, L, C, 8)
+    x = np.asarray(x_raw, dtype=np.float32)
+    if x.ndim != 3:
+        raise ValueError(f"x_raw must be (N, C, T), got {x.shape}")
+    n, c, T = x.shape
 
-    model = _load_brant_model(weights, device, allow_random_init=allow_random_init)
+    up, down = _resample_factors(int(round(fs)), BRANT_FS)
+    s250 = resample_poly(x, up, down, axis=-1).astype(np.float32)
+    if s250.shape[-1] < BRANT_PATCH_LEN:
+        raise ValueError(
+            f"windows are {s250.shape[-1]} samples at {BRANT_FS} Hz "
+            f"({s250.shape[-1] / BRANT_FS:.2f} s) but Brant's patch is "
+            f"{BRANT_PATCH_LEN} ({BRANT_PATCH_LEN / BRANT_FS:.1f} s). Give it its "
+            f"native context -- the paper's arm uses [t-4.5, t+1.5].")
+    s250 = s250[..., -BRANT_PATCH_LEN:]                    # the patch ending at t+1.5
 
-    N = patches.shape[0]
-    outs = []
-    for s in range(0, N, batch_size):
-        e = min(s + batch_size, N)
-        p = torch.from_numpy(patches[s:e]).to(device)
-        b = torch.from_numpy(blogpsd[s:e]).to(device)
-        z = model(p, b)                           # (B, L, C, D)
-        outs.append(z.float().cpu().numpy())
-    return np.concatenate(outs, axis=0)           # (N, L, C, 2048)
-
-
-def pool_embeddings(z: np.ndarray, mode: str = "mean_lc") -> np.ndarray:
-    """Pool (N, L, C, D) Brant embeddings for a regression head.
-
-    mode:
-      "mean_lc"  -> (N, D)      mean over patches and channels (default).
-      "mean_l"   -> (N, C, D)   mean over patches only (channel-aware head).
-      "flatten"  -> (N, L*C*D)  no pooling (large; only for tiny C).
-    """
-    if mode == "mean_lc":
-        return z.mean(axis=(1, 2))
-    if mode == "mean_l":
-        return z.mean(axis=1)
-    if mode == "flatten":
-        N = z.shape[0]
-        return z.reshape(N, -1)
-    raise ValueError(f"unknown pool mode {mode}")
-
-
-# ============================================================================
-# Self test
+    et, ec = load_brant(brant_src or brant_src_dir(), weights_dir or brant_weights_dir(),
+                        device, n_patches=1)
+    out = []
+    for i in range(0, n, batch_size):
+        chunk = s250[i:i + batch_size]                     # (B, C, 1500)
+        power = compute_power(chunk.reshape(-1, BRANT_PATCH_LEN))
+        power = power.reshape(chunk.shape[0], c, 1, -1)    # (B, C, 1, 8)
+        xt = torch.from_numpy(chunk).to(device).unsqueeze(2)          # (B, C, 1, 1500)
+        pt = torch.from_numpy(power).float().to(device)
+        emb = get_emb(xt, pt, et, ec)                      # (B, C, 1, 2048)
+        out.append(emb.squeeze(2).float().cpu().numpy())
+    return np.concatenate(out, axis=0)
