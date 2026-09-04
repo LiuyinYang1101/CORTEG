@@ -277,6 +277,98 @@ def run_fold(x_lo, x_hi, y, xyz_m, fold, args, device):
     return float(roc_auc_score(y[te_i], scores(lo_t, hi_t)))
 
 
+def run_pooled_fold(bundles, fold, args, device):
+    """Train ONE model across all subjects on this fold; score each separately.
+
+    This is the regime the paper reports. A pooled model sees every subject's
+    windows, which is the whole point of the transfer claim -- a per-subject model
+    is a different experiment and gets a different number.
+
+    Variable electrode counts are handled the way the Stanford pooled path does
+    it: one model built at ``max_C``, batches kept homogeneous per subject by
+    SubjectInterleavedSampler, and the right coordinates attached per batch by
+    make_collate_fn(SubjectXYZBank).
+    """
+    from sklearn.metrics import roc_auc_score
+    from torch.utils.data import ConcatDataset
+    from data.collate import SubjectXYZBank, make_collate_fn
+    from data.datasets import HiLoAddDataset
+    from data.scalers import apply_zscore_3d_per_channel, fit_zscore_3d_per_channel
+    from train.earlystop import EarlyStopper
+    from train.engine import EngineConfig, train_one_epoch
+    from train.lr_schedule import WarmupCosineLR
+    from train.sampling import SubjectInterleavedSampler
+
+    tr_sets, val_eval, te_eval, xyz_mm = [], [], [], []
+    for sid, (x_lo, x_hi, y, xyz_m, _) in enumerate(bundles):
+        fit_i, val_i, te_i = (np.asarray(a) for a in fold[sid])
+        lo_st = fit_zscore_3d_per_channel(x_lo[fit_i])      # fit split only
+        hi_st = fit_zscore_3d_per_channel(x_hi[fit_i])
+        z = lambda a, st: apply_zscore_3d_per_channel(a, st)
+        tr_sets.append(HiLoAddDataset(z(x_lo[fit_i], lo_st), z(x_hi[fit_i], hi_st),
+                                      y[fit_i].astype(np.float32)[:, None], sid))
+        val_eval.append((z(x_lo[val_i], lo_st), z(x_hi[val_i], hi_st), y[val_i], sid))
+        te_eval.append((z(x_lo[te_i], lo_st), z(x_hi[te_i], hi_st), y[te_i], sid))
+        xyz_mm.append(xyz_m * 1000.0)
+
+    max_C = max(b[0].shape[1] for b in bundles)
+    T_lo = bundles[0][0].shape[2]
+    model = build_corteg(max_C, T_lo, bundles[0][3], args).to(device)
+
+    bank = SubjectXYZBank.from_mm(xyz_mm)
+    collate = make_collate_fn(bank)
+    concat = ConcatDataset(tr_sets)
+    sampler = SubjectInterleavedSampler([len(d) for d in tr_sets],
+                                        batch_size=args.batch_size, shuffle=True)
+    tr_dl = DataLoader(concat, batch_sampler=sampler, collate_fn=collate)
+
+    params = [p for p in model.parameters() if p.requires_grad]
+    opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.weight_decay)
+    sched = WarmupCosineLR(opt, warmup_epochs=args.warmup_epochs,
+                           max_epochs=args.epochs, min_lr=args.min_lr)
+    lossf = nn.BCEWithLogitsLoss()
+
+    def step_fn(m, batch):
+        y = batch["y"].to(device)
+        out = m(batch["x_raw"].to(device), x_hi=batch["x_hi"].to(device),
+                ecog_xyz=batch["ecog_xyz"].to(device))
+        return {"y_hat": out, "loss": lossf(out.reshape(-1), y.reshape(-1))}
+
+    @torch.no_grad()
+    def auroc(split):
+        model.eval()
+        per, pooled_y, pooled_s = {}, [], []
+        for lo, hi, y, sid in split:
+            xyz = torch.from_numpy(bank.get_m(sid)).float().to(device)
+            s = []
+            for i in range(0, len(lo), args.batch_size):
+                b = torch.from_numpy(lo[i:i + args.batch_size]).to(device)
+                o = model(b, x_hi=torch.from_numpy(hi[i:i + args.batch_size]).to(device),
+                          ecog_xyz=xyz.unsqueeze(0).expand(b.shape[0], -1, -1))
+                s.append(o.reshape(-1).float().cpu().numpy())
+            s = np.concatenate(s)
+            per[sid] = (float(roc_auc_score(y, s)) if len(np.unique(y)) > 1 else float("nan"))
+            pooled_y.append(y); pooled_s.append(s)
+        pooled = float(roc_auc_score(np.concatenate(pooled_y), np.concatenate(pooled_s)))
+        return per, pooled
+
+    cfg = EngineConfig(use_amp=False, accum_iter=1, max_norm=args.max_norm)
+    early = EarlyStopper(patience=args.patience)
+    for ep in range(args.epochs):
+        model.train()
+        tr = train_one_epoch(model, tr_dl, opt, torch.device(device),
+                             cfg=cfg, step_fn=step_fn)
+        sched.step()
+        _, val_pooled = auroc(val_eval)          # early-stop on POOLED val AUROC
+        if ep % 10 == 0:
+            print(f"    [ep {ep+1}] loss={tr['loss']:.4f} val_auroc={val_pooled:.4f}", flush=True)
+        if early.step(val_pooled, model):
+            break
+    early.restore(model)
+    per, _ = auroc(te_eval)
+    return per
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -290,6 +382,9 @@ def main():
     p.add_argument("--max_per_class", type=int, default=900)
     p.add_argument("--hga_low", type=float, default=70.0)
     p.add_argument("--hga_high", type=float, default=200.0)
+    p.add_argument("--train_mode", default="pooled", choices=["pooled", "per_subject"],
+                   help="pooled = ONE model over all subjects (what the paper reports); "
+                        "per_subject = an independent model each, a different experiment")
     p.add_argument("--n_folds", type=int, default=4)
     p.add_argument("--val_frac", type=float, default=0.15)
     p.add_argument("--no_cache", action="store_true")
@@ -311,7 +406,7 @@ def main():
     p.add_argument("--lora_dropout", type=float, default=0.2)
     p.add_argument("--head_dropout", type=float, default=0.1)
 
-    p.add_argument("--epochs", type=int, default=60)
+    p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--batch_size", type=int, default=32)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--weight_decay", type=float, default=0.005)
@@ -337,27 +432,54 @@ def main():
     save_root = args.save_root or os.path.join(btb_output_root(), "runs")
     os.makedirs(save_root, exist_ok=True)
 
-    results, t0 = {}, time.time()
-    for subj in args.subjects:
-        x_lo, x_hi, y, xyz_m, ev_t = extract_subject(subj, args)
-        folds = forward_chaining_split(ev_t, win_sec=args.win_sec,
-                                       n_folds=args.n_folds, val_frac=args.val_frac)
-        rep = split_report(ev_t, args.win_sec, folds[0][0], folds[0][2],
-                           folds[0][1], scheme="forward_chaining")
-        print(f"[{subj}] {len(folds)} causal folds | {rep}", flush=True)
+    t0 = time.time()
+    bundles = [extract_subject(s, args) for s in args.subjects]
 
-        aucs = []
-        for fi, fold in enumerate(folds):
-            auc = run_fold(x_lo, x_hi, y, xyz_m, fold, args, device)
-            aucs.append(auc)
-            print(f"  [{subj}] fold {fi}: test AUROC = {auc:.4f}", flush=True)
-        results[subj] = {"folds": aucs, "mean": float(np.mean(aucs))}
-        print(f"[{subj}] mean AUROC = {np.mean(aucs):.4f}\n", flush=True)
+    if args.train_mode == "per_subject":
+        results = {}
+        for subj, b in zip(args.subjects, bundles):
+            folds = forward_chaining_split(b[4], win_sec=args.win_sec,
+                                           n_folds=args.n_folds, val_frac=args.val_frac)
+            aucs = [run_fold(b[0], b[1], b[2], b[3], f, args, device) for f in folds]
+            results[subj] = {"folds": aucs, "mean": float(np.mean(aucs))}
+            print(f"[{subj}] mean AUROC = {np.mean(aucs):.4f}\n", flush=True)
+    else:
+        # One split per subject, then fold f trains a single model on every
+        # subject's fold-f training side and scores each subject's fold-f test side.
+        per_subj = []
+        for subj, b in zip(args.subjects, bundles):
+            f = forward_chaining_split(b[4], win_sec=args.win_sec,
+                                       n_folds=args.n_folds, val_frac=args.val_frac)
+            if len(f) != args.n_folds:
+                raise SystemExit(f"{subj}: {len(f)} causal folds, wanted {args.n_folds} "
+                                 "— too few events for this embargo")
+            rep = split_report(b[4], args.win_sec, f[0][0], f[0][2], f[0][1],
+                               scheme="forward_chaining")
+            if rep["overlapping_train_test_pairs"] or not rep["causal"]:
+                raise AssertionError(f"{subj}: split leaks — {rep}")
+            per_subj.append(f)
+        print(f"[folds] {args.n_folds} causal folds x {len(bundles)} subjects, "
+              f"overlapping pairs=0", flush=True)
+
+        per_fold = []
+        for fi in range(args.n_folds):
+            fold = [per_subj[sid][fi] for sid in range(len(bundles))]
+            scores = run_pooled_fold(bundles, fold, args, device)
+            per_fold.append(scores)
+            print(f"  fold {fi}: " + "  ".join(
+                f"{args.subjects[s]}={v:.4f}" for s, v in sorted(scores.items())), flush=True)
+        results = {}
+        for sid, subj in enumerate(args.subjects):
+            vals = [pf[sid] for pf in per_fold if not np.isnan(pf[sid])]
+            results[subj] = {"folds": [float(pf[sid]) for pf in per_fold],
+                             "mean": float(np.mean(vals)) if vals else float("nan")}
+            print(f"[{subj}] mean AUROC = {results[subj]['mean']:.4f}", flush=True)
 
     cohort = float(np.mean([r["mean"] for r in results.values()]))
     out = {"cohort_mean_auroc": cohort, "per_subject": results,
            "args": vars(args), "elapsed_s": time.time() - t0}
-    dest = os.path.join(save_root, f"btb_{args.merge_strategy}_seed{args.seed}.json")
+    dest = os.path.join(
+        save_root, f"btb_{args.train_mode}_{args.merge_strategy}_seed{args.seed}.json")
     with open(dest, "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=2)
     print(f"cohort mean AUROC over {len(results)} subjects = {cohort:.4f}")

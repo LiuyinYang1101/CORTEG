@@ -19,7 +19,7 @@ COMMON=(
     --steegformer_variant small
     --win_sec 1.5 --pre_sec 0.0
     --n_folds 4 --val_frac 0.15
-    --epochs 60 --patience 20 --batch_size 32
+    --epochs 100 --patience 20 --batch_size 32
     --lr 3e-4 --weight_decay 0.005 --warmup_epochs 5
     --lora_last_n 4 --lora_r 4 --lora_alpha 16 --lora_dropout 0.2
     --seed "$SEED"
@@ -45,7 +45,7 @@ python -m experiments.run_btb_classification \
     --no_pretrained \
     --steegformer_variant small \
     --win_sec 1.5 --pre_sec 0.0 --n_folds 4 --val_frac 0.15 \
-    --epochs 60 --patience 20 --batch_size 32 \
+    --epochs 100 --patience 20 --batch_size 32 \
     --lr 3e-4 --weight_decay 0.005 --warmup_epochs 5 \
     --lora_last_n 4 --lora_r 4 --lora_alpha 16 --lora_dropout 0.2 \
     --seed "$SEED" --merge_strategy layerwise_gate \
