@@ -38,6 +38,12 @@ Thumbs.db
 *.pt
 *.pth
 *.ckpt
+
+# ...except the released CORTEG adapter itself. It is 1.2 MB because it holds
+# only the trainable parameters (LoRA + spatial adapter + LayerNorm + head);
+# the frozen ST-EEGFormer backbone is downloaded separately (CHECKPOINTS.md).
+!checkpoints/corteg_stanford_pooled.pt
+!checkpoints/*.json
 *.safetensors
 
 # Experiment outputs

@@ -266,6 +266,71 @@ class TestPretrainedLoads(unittest.TestCase):
                         ecog_xyz_m=xyz, d_out=5)
 
 
+class TestReleasedCheckpoint(unittest.TestCase):
+    """The released adapter must keep loading as the repo is cleaned up.
+
+    This is the regression anchor for the strip-down: removing an argument or a
+    merge strategy that the checkpoint's recorded build_args still name would
+    break loading, and this test says so immediately.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ckpt = REPO / "checkpoints" / "corteg_stanford_pooled.pt"
+        if not cls.ckpt.exists():
+            raise unittest.SkipTest("released checkpoint not present")
+
+    def test_manifest_matches_bytes_and_hash(self):
+        from load_corteg import verify_checkpoint
+        man = verify_checkpoint()
+        self.assertEqual(man["trainable_params"], 297236)
+
+    def test_paper_number_matches_manifest(self):
+        """Manifest r must equal the README's CORTEG (pooled) finger score."""
+        import re as _re
+        man = json.loads((REPO / "checkpoints" / "corteg_stanford_pooled.json")
+                         .read_text(encoding="utf-8"))
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        row = next((l for l in readme.splitlines()
+                    if "CORTEG (pooled)" in l and "|" in l), None)
+        self.assertIsNotNone(row, "README has no CORTEG (pooled) row")
+        nums = _re.findall(r"0\.\d+", row)
+        self.assertTrue(nums, f"no number in README row: {row!r}")
+        self.assertEqual(float(nums[0]), round(man["paper"]["value"], 3),
+                         f"README says {nums[0]}, manifest says {man['paper']['value']}")
+
+    def test_checkpoint_rebuilds_and_loads(self):
+        """Rebuild from the manifest's build_args and load every tensor."""
+        import numpy as np
+        from load_corteg import load_corteg, predict
+        cfg = REPO / "configs" / "steegformer_small.json"
+        import paths as paths_mod
+        rel = json.loads(cfg.read_text(encoding="utf-8"))["pretrained"]["path"]
+        if not os.path.exists(paths_mod.resolve_pretrained_path(rel)):
+            self.skipTest("ST-EEGFormer backbone not present; see CHECKPOINTS.md")
+        C, T_LO, T_HI = 46, 128, 200        # real Stanford dims, subject bp
+        xyz = np.random.RandomState(0).randn(C, 3).astype(np.float32) * 0.03
+        model = load_corteg(C_in=C, T_in=T_LO, ecog_xyz_mm=xyz, d_out=5)
+        rs = np.random.RandomState(1)
+        y = predict(model, rs.randn(3, C, T_LO), rs.randn(3, C, T_HI))
+        self.assertEqual(y.shape, (3, 5))
+
+    def test_build_args_only_name_supported_flags(self):
+        """Every arg recorded in the manifest must still exist on the runner.
+
+        This is what catches an over-eager cleanup: delete --use_ea from the
+        parser while the checkpoint's build_args still lists it and the release
+        stops being self-describing.
+        """
+        spec = parser_spec(RUNNER)
+        man = json.loads((REPO / "checkpoints" / "corteg_stanford_pooled.json")
+                         .read_text(encoding="utf-8"))
+        stale = sorted(k for k in man["build_args"] if f"--{k}" not in spec)
+        self.assertEqual(stale, [],
+                         "manifest build_args name flags the runner no longer has: "
+                         f"{stale} — regenerate the manifest after the cleanup")
+
+
 class TestConfigs(unittest.TestCase):
     def test_configs_declare_a_pretrained_path(self):
         for cfg in sorted((REPO / "configs").glob("*.json")):
