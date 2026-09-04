@@ -5,10 +5,7 @@ Merge strategies:
   - average:        fixed 0.5 lo + 0.5 hi  (clean baseline)
   - hi_lora:        hi tokens pass through early blocks with DualLoRA adapters,
                     then fixed 0.5 merge (hi gets real transformer processing)
-  - learned_router: per-token gating network predicts lo/hi blend weight
-  - cross_attn:     lo attends to hi via cross-attention + residual
-  - spvae_router:   SPVAE precision-based per-channel gate (from private latent variances)
-  - hi_lora_router: hi_lora early processing + learned_router merge (combined)
+  - layerwise_gate: one learned scalar per block gates hi into the lo stream
 """
 from __future__ import annotations
 
@@ -60,23 +57,6 @@ class ChannelAdapterBase(nn.Module):
         raise NotImplementedError
 
 
-class ZeroMLPAdapter(ChannelAdapterBase):
-    """MLP(xyz→D), zero-init last layer. Used in 'replace' or 'additive' mode."""
-    def __init__(self, D: int, hidden: int = 128):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(3, hidden),
-            nn.GELU(),
-            nn.Linear(hidden, hidden),
-            nn.GELU(),
-            nn.Linear(hidden, D, bias=False),
-        )
-        nn.init.zeros_(self.net[-1].weight)
-
-    def forward(self, xyz: torch.Tensor) -> torch.Tensor:
-        if xyz.ndim == 2:
-            xyz = xyz.unsqueeze(0)
-        return self.net(xyz)  # (B, C, D)
 
 
 class FourierMLPAdapter(ChannelAdapterBase):
@@ -100,103 +80,12 @@ class FourierMLPAdapter(ChannelAdapterBase):
         return self.net(ff)  # (B, C, D)
 
 
-class SubspaceAdapter(ChannelAdapterBase):
-    """Fourier(xyz) → MLP → k coefficients → V_k^T → D.
-
-    Projects into the principal subspace of pretrained channel embeddings,
-    guaranteeing outputs are in-distribution for frozen transformer blocks.
-    """
-    def __init__(self, eeg_emb: torch.Tensor, hidden: int = 128, n_freq: int = 32, k: int = 48):
-        super().__init__()
-        M, D = eeg_emb.shape
-        k = min(k, M, D)
-        self.n_freq = n_freq
-
-        # Compute principal directions of pretrained embedding space
-        with torch.no_grad():
-            # Center the embeddings for better SVD
-            mean = eeg_emb.mean(dim=0, keepdim=True)
-            _, _, V = torch.linalg.svd(eeg_emb - mean, full_matrices=False)
-            V_k = V[:k, :]  # (k, D) — top-k right singular vectors
-        self.register_buffer("V_k", V_k)
-        self.register_buffer("emb_mean", mean.squeeze(0))  # (D,)
-
-        self.net = nn.Sequential(
-            nn.Linear(6 * n_freq, hidden),
-            nn.GELU(),
-            nn.Linear(hidden, k, bias=False),
-        )
-        nn.init.zeros_(self.net[-1].weight)
-
-    def forward(self, xyz: torch.Tensor) -> torch.Tensor:
-        if xyz.ndim == 2:
-            xyz = xyz.unsqueeze(0)
-        ff = _fourier_features(xyz, self.n_freq)    # (B, C, 6F)
-        coeff = self.net(ff)                         # (B, C, k)
-        return torch.matmul(coeff, self.V_k)         # (B, C, D) — always in subspace
 
 
-class SoftLookupAdditiveAdapter(ChannelAdapterBase):
-    """softmax(MLP(xyz)/τ) @ E, with learnable scale starting at 0.
-
-    Like the original fuser but:
-    1. ADDITIVE (not replacing enc_channel)
-    2. Proper softmax normalization
-    3. Scale parameter starts at 0 → no-op at init
-    """
-    def __init__(self, eeg_emb: torch.Tensor, hidden: int = 128, tau: float = 1.0):
-        super().__init__()
-        M, D = eeg_emb.shape
-        self.register_buffer("E", eeg_emb.to(torch.float32))
-        self.tau = tau
-        self.net = nn.Sequential(
-            nn.Linear(3, hidden),
-            nn.GELU(),
-            nn.Linear(hidden, M),
-        )
-        self.scale = nn.Parameter(torch.zeros(1))
-
-    def forward(self, xyz: torch.Tensor) -> torch.Tensor:
-        if xyz.ndim == 2:
-            xyz = xyz.unsqueeze(0)
-        logits = self.net(xyz)                       # (B, C, M)
-        w = F.softmax(logits / self.tau, dim=-1)     # (B, C, M)
-        fused = torch.matmul(w, self.E)              # (B, C, D)
-        return self.scale * fused
 
 
-class CoordPEAdapter(ChannelAdapterBase):
-    """Fixed sinusoidal positional encoding of xyz — no learnable parameters.
-
-    Encodes spatial position like a transformer PE but in 3D.
-    """
-    def __init__(self, D: int, n_freq: int = 32):
-        super().__init__()
-        self.n_freq = n_freq
-        # Fixed projection from Fourier features to D
-        # Use a deterministic projection (no learning)
-        proj = torch.zeros(6 * n_freq, D)
-        # Fill with scaled random orthogonal-ish directions (fixed at init)
-        torch.manual_seed(42)
-        nn.init.orthogonal_(proj[:D, :])  # first D rows orthogonal
-        if 6 * n_freq > D:
-            nn.init.orthogonal_(proj[D:min(2*D, 6*n_freq), :])
-        proj *= 0.02  # small scale so it doesn't dominate
-        self.register_buffer("proj", proj)
-
-    def forward(self, xyz: torch.Tensor) -> torch.Tensor:
-        if xyz.ndim == 2:
-            xyz = xyz.unsqueeze(0)
-        ff = _fourier_features(xyz, self.n_freq)     # (B, C, 6F)
-        return torch.matmul(ff, self.proj)            # (B, C, D)
 
 
-# ============================================================
-# EEG electrode positions (meters) for the 142-channel montage
-# used in STEEGFormer pretraining.  Index = embedding table row.
-# Generated from MNE standard_1005 montage.
-# ============================================================
-# fmt: off
 _EEG_XYZ_142 = [
     [-0.036158,-0.009984, 0.089752],[ 0.000325,-0.081115, 0.082615],[ 0.067118,-0.010900, 0.063580],
     [ 0.067914, 0.049830, 0.016367],[ 0.083888, 0.001946, 0.008501],[ 0.000108,-0.114892, 0.014657],
@@ -295,64 +184,8 @@ def _knn_weights(
     return weights, topk_idx
 
 
-class KNNHardAdapter(ChannelAdapterBase):
-    """Pure spatial KNN interpolation from pretrained EEG embeddings — no learnable params.
-
-    For each ECoG electrode, computes a Gaussian-weighted average of the K nearest
-    EEG channel embeddings based on 3D distance. This gives a physically meaningful
-    channel embedding that the frozen transformer blocks understand.
-
-    Computes at runtime from xyz so it works with pooled training
-    (different subjects have different electrode positions per batch).
-    """
-    def __init__(self, eeg_emb: torch.Tensor, ecog_xyz_m: torch.Tensor,
-                 k: int = 8, sigma: Optional[float] = None):
-        super().__init__()
-        self.k = k
-        # Store sigma from initial subject for consistent bandwidth
-        eeg_xyz = _get_eeg_xyz_tensor(ecog_xyz_m.device)
-        _, topk_idx = _knn_weights(ecog_xyz_m, eeg_xyz, k=k, sigma=sigma)
-        # We don't precompute embeddings — just store EEG positions & embeddings
-        self.register_buffer("eeg_xyz", eeg_xyz)
-        self.register_buffer("eeg_emb", eeg_emb[:_N_EEG].clone().detach())
-
-    def forward(self, xyz: torch.Tensor) -> torch.Tensor:
-        if xyz.ndim == 2:
-            xyz = xyz.unsqueeze(0)
-        # xyz: (B, C, 3) in meters
-        B, C, _ = xyz.shape
-        # Compute per-sample KNN weights
-        # Flatten batch for efficiency: (B*C, 3)
-        flat_xyz = xyz.reshape(-1, 3)
-        weights, _ = _knn_weights(flat_xyz, self.eeg_xyz, k=self.k)  # (B*C, M)
-        emb = weights @ self.eeg_emb  # (B*C, D)
-        return emb.reshape(B, C, -1)
 
 
-class KNNFourierAdapter(ChannelAdapterBase):
-    """KNN spatial interpolation + learnable Fourier residual.
-
-    Base: Gaussian-KNN weighted average of pretrained EEG embeddings (computed at runtime).
-    Residual: FourierMLPAdapter (zero-init) learns corrections.
-    """
-    def __init__(self, eeg_emb: torch.Tensor, ecog_xyz_m: torch.Tensor,
-                 k: int = 8, sigma: Optional[float] = None,
-                 hidden: int = 128, n_freq: int = 32):
-        super().__init__()
-        D = eeg_emb.shape[1]
-        self.k = k
-        self.register_buffer("eeg_xyz", _get_eeg_xyz_tensor(ecog_xyz_m.device))
-        self.register_buffer("eeg_emb", eeg_emb[:_N_EEG].clone().detach())
-        self.residual = FourierMLPAdapter(D, hidden=hidden, n_freq=n_freq)
-
-    def forward(self, xyz: torch.Tensor) -> torch.Tensor:
-        if xyz.ndim == 2:
-            xyz = xyz.unsqueeze(0)
-        B, C, _ = xyz.shape
-        flat_xyz = xyz.reshape(-1, 3)
-        weights, _ = _knn_weights(flat_xyz, self.eeg_xyz, k=self.k)
-        base = (weights @ self.eeg_emb).reshape(B, C, -1)
-        return base + self.residual(xyz)
 
 
 class KNNSoftAdapter(ChannelAdapterBase):
@@ -416,113 +249,10 @@ class KNNSoftFourierAdapter(ChannelAdapterBase):
         return self.soft(xyz) + self.residual(xyz)
 
 
-# ============================================================
-# Gaussian Process spatial adapters
-# ============================================================
-
-def _se_kernel(X1: torch.Tensor, X2: torch.Tensor, lengthscale: float) -> torch.Tensor:
-    """Squared-exponential (RBF) kernel: k(x,x') = exp(-||x-x'||^2 / 2l^2)."""
-    dist_sq = torch.cdist(X1.unsqueeze(0), X2.unsqueeze(0)).squeeze(0).pow(2)
-    return torch.exp(-0.5 * dist_sq / (lengthscale ** 2))
 
 
-class GPHardAdapter(ChannelAdapterBase):
-    """GP posterior mean over pretrained EEG embeddings — no learnable params.
-
-    Given EEG positions P with embeddings E, the GP posterior mean at ECoG
-    position q is:
-        μ(q) = k(q, P) K(P,P)^{-1} E
-
-    where k is a squared-exponential kernel with auto-tuned lengthscale.
-    Unlike KNN, the GP properly accounts for correlations between EEG channels
-    (nearby EEG electrodes carry redundant information → avoids double-counting).
-
-    Also computes posterior variance σ²(q) which is stored for optional use
-    as per-channel confidence weights.
-    """
-    def __init__(self, eeg_emb: torch.Tensor, ecog_xyz_m: torch.Tensor,
-                 lengthscale: Optional[float] = None, noise: float = 0.5):
-        super().__init__()
-        M = min(eeg_emb.shape[0], _N_EEG)
-        eeg_xyz = _get_eeg_xyz_tensor(ecog_xyz_m.device)
-
-        # Auto-tune lengthscale: 2x median nearest-neighbour distance.
-        # Using median of ALL pairwise distances gives ~head diameter (13 cm),
-        # making the kernel nearly flat and K(P,P) ill-conditioned (cond ~1M).
-        # 2x median NN distance (~4.4 cm) gives a local kernel that respects
-        # spatial structure while remaining smooth.
-        if lengthscale is None:
-            dists = torch.cdist(eeg_xyz.unsqueeze(0), eeg_xyz.unsqueeze(0)).squeeze(0)
-            nn_dists = dists.topk(2, dim=-1, largest=False).values[:, 1]  # nearest neighbour
-            lengthscale = (nn_dists.median() * 2.0).clamp(min=1e-6).item()
-
-        # K(P,P) + noise*I — (M, M)
-        # noise=0.5 gives smooth interpolation (eff_N~8, matching KNN).
-        # noise=1e-4 (old default) forces near-exact interpolation through 142
-        # dense points, causing wild oscillations (abs weight sum ~42, 65 negatives).
-        K_PP = _se_kernel(eeg_xyz, eeg_xyz, lengthscale)
-        K_PP += noise * torch.eye(M, device=K_PP.device, dtype=K_PP.dtype)
-
-        # Precompute alpha = K(P,P)^{-1} @ E via Cholesky — (M, D)
-        E = eeg_emb[:M].clone().detach().float()
-        L = torch.linalg.cholesky(K_PP)
-        alpha = torch.cholesky_solve(E, L)  # (M, D)
-
-        # Precompute L_inv for variance: σ²(q) = k(q,q) - ||L^{-1} k(P,q)||²
-        L_inv = torch.linalg.solve_triangular(L, torch.eye(M, device=L.device), upper=False)
-
-        self.register_buffer("eeg_xyz", eeg_xyz)
-        self.register_buffer("alpha", alpha)
-        self.register_buffer("L_inv", L_inv)
-        self.lengthscale = lengthscale
-
-    def forward(self, xyz: torch.Tensor) -> torch.Tensor:
-        if xyz.ndim == 2:
-            xyz = xyz.unsqueeze(0)
-        B, C, _ = xyz.shape
-        flat_xyz = xyz.reshape(-1, 3)
-
-        # k(q, P): (B*C, M)
-        K_qP = _se_kernel(flat_xyz, self.eeg_xyz, self.lengthscale)
-
-        # μ(q) = K(q,P) @ alpha: (B*C, D)
-        emb = K_qP @ self.alpha
-        return emb.reshape(B, C, -1)
-
-    def posterior_variance(self, xyz: torch.Tensor) -> torch.Tensor:
-        """Compute GP posterior variance at query positions.
-
-        Returns (B, C) variance values — lower = more confident mapping.
-        """
-        if xyz.ndim == 2:
-            xyz = xyz.unsqueeze(0)
-        B, C, _ = xyz.shape
-        flat_xyz = xyz.reshape(-1, 3)
-
-        K_qP = _se_kernel(flat_xyz, self.eeg_xyz, self.lengthscale)
-        # v = L^{-1} k(P, q)  →  (M, B*C)
-        v = self.L_inv @ K_qP.T
-        # σ²(q) = k(q,q) - ||v||² = 1.0 - ||v||²  (since k(q,q)=1 for SE kernel)
-        var = (1.0 - (v * v).sum(dim=0)).clamp(min=0)
-        return var.reshape(B, C)
 
 
-class GPFourierAdapter(ChannelAdapterBase):
-    """GP posterior mean + learnable Fourier residual.
-
-    Combines the principled GP spatial mapping with a learnable correction
-    that can capture patterns the GP kernel misses.
-    """
-    def __init__(self, eeg_emb: torch.Tensor, ecog_xyz_m: torch.Tensor,
-                 lengthscale: Optional[float] = None, noise: float = 0.5,
-                 hidden: int = 128, n_freq: int = 32):
-        super().__init__()
-        D = eeg_emb.shape[1]
-        self.gp = GPHardAdapter(eeg_emb, ecog_xyz_m, lengthscale=lengthscale, noise=noise)
-        self.residual = FourierMLPAdapter(D, hidden=hidden, n_freq=n_freq)
-
-    def forward(self, xyz: torch.Tensor) -> torch.Tensor:
-        return self.gp(xyz) + self.residual(xyz)
 
 
 # ============================================================
@@ -645,82 +375,14 @@ class TemporalPositionalEncoding(nn.Module):
         return self.pe[0, seq_indices.reshape(-1)].view(b, n, -1)
 
 
-# ============================================================
-# SPVAE helpers — latent router from private variance
-# ============================================================
-
-def _gauss_kl_std_normal(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-    """KL(q(z|x) || N(0,I)), averaged over batch."""
-    return 0.5 * torch.mean(torch.sum(torch.exp(logvar) + mu**2 - 1.0 - logvar, dim=-1))
 
 
-def _reparam(mu: torch.Tensor, logvar: torch.Tensor, training: bool) -> torch.Tensor:
-    if not training:
-        return mu
-    return mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)
 
 
-def _poe_diag_gaussians(mu1, logvar1, mu2, logvar2, eps=1e-8):
-    """Product-of-experts aggregation of two diagonal Gaussians."""
-    var1 = torch.exp(logvar1).clamp_min(eps)
-    var2 = torch.exp(logvar2).clamp_min(eps)
-    prec = (1.0 / var1 + 1.0 / var2).clamp_min(eps)
-    var = 1.0 / prec
-    mu = var * (mu1 / var1 + mu2 / var2)
-    return mu, torch.log(var.clamp_min(eps))
 
 
-class MLPDiagGaussian(nn.Module):
-    """MLP encoder → (mu, logvar) for diagonal Gaussian."""
-    def __init__(self, D_in: int, D_h: int, D_z: int, dropout: float = 0.0):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(D_in, D_h),
-            nn.GELU(),
-            nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
-        )
-        self.mu = nn.Linear(D_h, D_z)
-        self.logvar = nn.Linear(D_h, D_z)
-        nn.init.zeros_(self.logvar.weight)
-        nn.init.zeros_(self.logvar.bias)
-
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        h = self.net(x)
-        return self.mu(h), self.logvar(h)
 
 
-# ============================================================
-# Merge modules
-# ============================================================
-
-class LearnedRouter(nn.Module):
-    """Per-token gating: examines both lo and hi to predict blend weight.
-
-    gate = sigmoid(MLP(cat(lo, hi)))   ∈ (0,1) per token
-    merged = (1 - gate) * lo + gate * hi
-
-    Uses a narrow bottleneck (default 16) to keep params minimal (~4K for D=512).
-    Zero-init last layer → gate starts at 0.5 (matches average baseline).
-    """
-    def __init__(self, embed_dim: int, bottleneck: int = 16):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(2 * embed_dim),
-            nn.Linear(2 * embed_dim, bottleneck),
-            nn.GELU(),
-            nn.Linear(bottleneck, 1),
-        )
-        # Zero-init last linear so gate ≈ 0.5 at start
-        nn.init.zeros_(self.net[-1].weight)
-        nn.init.zeros_(self.net[-1].bias)
-
-    def forward(
-        self, lo: torch.Tensor, hi: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Returns (merged, gate) where gate is [B, N, 1]."""
-        gate = torch.sigmoid(self.net(torch.cat([lo, hi], dim=-1)))
-        merged = (1 - gate) * lo + gate * hi
-        return merged, gate
 
 
 class LayerwiseHiLoGate(nn.Module):
@@ -826,73 +488,13 @@ class TokenRegressor(nn.Module):
         return self.head(self.dropout(h))
 
 
-# ============================================================
-# FC Graph Adapter (GAT with functional connectivity adjacency)
-# ============================================================
-
-class FCGraphAdapter(nn.Module):
-    """Graph Attention Network adapter using functional connectivity adjacency.
-
-    Inserted after channel embedding: h' = h + alpha * GAT(h, A_s)
-    where alpha is a learnable scalar initialized to 0 (zero-init residual).
-    """
-
-    def __init__(self, embed_dim: int, num_heads: int = 4, dropout: float = 0.1):
-        super().__init__()
-        self.num_heads = num_heads
-        head_dim = embed_dim // num_heads
-        self.head_dim = head_dim
-        self.scale = head_dim ** -0.5
-
-        self.q_proj = nn.Linear(embed_dim, embed_dim)
-        self.k_proj = nn.Linear(embed_dim, embed_dim)
-        self.v_proj = nn.Linear(embed_dim, embed_dim)
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
-        self.attn_drop = nn.Dropout(dropout)
-
-        # Zero-init residual gate
-        self.alpha = nn.Parameter(torch.zeros(1))
-
-        # Zero-init output projection for stable start
-        nn.init.zeros_(self.out_proj.weight)
-        nn.init.zeros_(self.out_proj.bias)
-
-    def forward(self, x: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: (B, C, D) channel embeddings
-            adj: (C, C) adjacency matrix (sparse OK, will be used as attention mask)
-        Returns:
-            (B, C, D) updated embeddings with graph-aware residual
-        """
-        B, C, D = x.shape
-        H = self.num_heads
-
-        q = self.q_proj(x).reshape(B, C, H, self.head_dim).permute(0, 2, 1, 3)  # (B,H,C,hd)
-        k = self.k_proj(x).reshape(B, C, H, self.head_dim).permute(0, 2, 1, 3)
-        v = self.v_proj(x).reshape(B, C, H, self.head_dim).permute(0, 2, 1, 3)
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale  # (B,H,C,C)
-
-        # Mask attention by adjacency: -inf where adj == 0
-        mask = (adj == 0).unsqueeze(0).unsqueeze(0)  # (1,1,C,C)
-        attn = attn.masked_fill(mask, float('-inf'))
-
-        attn = F.softmax(attn, dim=-1)
-        attn = torch.nan_to_num(attn, nan=0.0)  # handle rows with all -inf
-        attn = self.attn_drop(attn)
-
-        out = (attn @ v).permute(0, 2, 1, 3).reshape(B, C, D)  # (B,C,D)
-        out = self.out_proj(out)
-
-        return x + self.alpha * out
 
 
 # ============================================================
 # Clean Hi-Lo Backbone
 # ============================================================
 
-MERGE_STRATEGIES = ("average", "hi_lora", "learned_router", "cross_attn", "spvae_router", "hi_lora_router", "layerwise_gate")
+MERGE_STRATEGIES = ("average", "layerwise_gate")
 
 
 class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
@@ -959,14 +561,8 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
         self.merge_block_idx = max(0, depth - int(hi_inject_last_n))
 
         # Strategy-specific modules (only create what's needed)
-        # hi_lora: DualLoRA is injected into early blocks externally (by the runner);
-        #          no extra modules needed here, just the flag.
-        self.learned_router: Optional[LearnedRouter] = None
-        self.cross_attn_layer: Optional[nn.MultiheadAttention] = None
         self.layerwise_gate: Optional[LayerwiseHiLoGate] = None
         self.layerwise_gate_share_blocks: bool = bool(layerwise_gate_share_blocks)
-        if merge_strategy in ("learned_router", "hi_lora_router"):
-            self.learned_router = LearnedRouter(embed_dim)
         if merge_strategy == "layerwise_gate":
             self.layerwise_gate = LayerwiseHiLoGate(
                 embed_dim,
@@ -974,30 +570,12 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
                 bottleneck=int(layerwise_gate_bottleneck),
                 gate_act=str(layerwise_gate_act),
             )
-        if merge_strategy == "cross_attn":
-            self.cross_attn_layer = nn.MultiheadAttention(
-                embed_dim, num_heads=min(4, num_heads), batch_first=False,
-            )
-            # Zero-init cross-attn output projection for stable start
-            nn.init.zeros_(self.cross_attn_layer.out_proj.weight)
-            nn.init.zeros_(self.cross_attn_layer.out_proj.bias)
-
         # ECoG channel adapter (attached after pretrained load)
         self.ecog_fuser: Optional[ECoGChannelAdapter] = None
         # New modular adapter system (additive to enc_channel by default)
         self.channel_adapter: Optional[ChannelAdapterBase] = None
         self._channel_adapter_mode: str = "additive"  # "additive" or "replace"
 
-        # SPVAE latent router (attached via attach_spvae)
-        self.use_spvae = False
-        self.spvae_beta_s: float = 0.0
-        self.spvae_beta_p: float = 0.0
-        self.spvae_lambda_agree: float = 0.0
-        self.enc_s_lo: Optional[MLPDiagGaussian] = None
-        self.enc_s_hi: Optional[MLPDiagGaussian] = None
-        self.enc_p_lo: Optional[MLPDiagGaussian] = None
-        self.enc_p_hi: Optional[MLPDiagGaussian] = None
-        self._spvae_alpha_per_channel: Optional[torch.Tensor] = None
         self.last_aux: Dict[str, torch.Tensor] = {}
 
         # For logging: store last router gate mean
@@ -1008,10 +586,6 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
         self.num_prompt_tokens: int = 0
         self._prompt_dim: int = embed_dim
 
-        # --- FC Graph Adapter (attached via attach_fc_graph_adapter) ---
-        self.fc_graph_adapter: Optional[FCGraphAdapter] = None
-        self._fc_adj: Optional[Dict[int, torch.Tensor]] = None  # per-subject adjacency
-
     def attach_ecog_fuser_from_channel_embed(self, M: Optional[int] = None, hidden: int = 128):
         """Create and attach an ECoGChannelAdapter using the pretrained EEG embedding table."""
         dev = self.enc_channel.emb.weight.device
@@ -1021,40 +595,6 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
                 E = E[:int(M)]
             E = E.to(device=dev, dtype=torch.float32)
         self.ecog_fuser = ECoGChannelAdapter(E, hidden=hidden).to(dev)
-
-    def attach_spvae(
-        self, *,
-        z_shared_dim: int = 128,
-        z_private_dim: int = 128,
-        hidden: int = 256,
-        beta_s: float = 1e-4,
-        beta_p: float = 1e-3,
-        lambda_agree: float = 1e-3,
-    ):
-        """Attach SPVAE encoders for precision-based latent routing.
-
-        Four VAE encoders map time-pooled lo/hi patch embeddings to
-        shared + private latent spaces.  The ratio of private-latent
-        precisions gives a per-channel merge gate alpha:
-
-            prec_hi = exp(-logvar_p_hi)
-            alpha   = prec_hi / (prec_lo + prec_hi)
-            merged  = (1-alpha)*lo + alpha*hi
-
-        Losses (added to self.last_aux):
-            loss_spvae = beta_s * KL_shared + beta_p * KL_private
-                       + lambda_agree * ||mu_s_lo - mu_s_hi||^2
-        """
-        D = self.enc_channel.emb.weight.shape[1]
-        zs, zp = int(z_shared_dim), int(z_private_dim)
-        self.use_spvae = True
-        self.spvae_beta_s = float(beta_s)
-        self.spvae_beta_p = float(beta_p)
-        self.spvae_lambda_agree = float(lambda_agree)
-        self.enc_s_lo = MLPDiagGaussian(D, hidden, zs)
-        self.enc_s_hi = MLPDiagGaussian(D, hidden, zs)
-        self.enc_p_lo = MLPDiagGaussian(D, hidden, zp)
-        self.enc_p_hi = MLPDiagGaussian(D, hidden, zp)
 
     def attach_subject_prompts(self, num_subjects: int, num_tokens: int = 4, init_std: float = 0.02):
         """Attach per-subject learnable prompt tokens.
@@ -1069,24 +609,6 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
         self._prompt_dim = D
         print(f"  Subject prompts attached: {num_subjects} subjects x {num_tokens} tokens "
               f"({self.subject_prompts.weight.numel()} params)", flush=True)
-
-    def attach_fc_graph_adapter(self, num_heads: int = 4, dropout: float = 0.1):
-        """Attach FC Graph Adapter (GAT with functional connectivity adjacency).
-
-        Adjacency matrices are set per-subject via set_fc_adjacency().
-        """
-        D = self.enc_channel.emb.weight.shape[1]
-        self.fc_graph_adapter = FCGraphAdapter(D, num_heads=num_heads, dropout=dropout)
-        self._fc_adj = {}
-        n_params = sum(p.numel() for p in self.fc_graph_adapter.parameters())
-        print(f"  FC Graph Adapter attached: {num_heads} heads, {n_params} params", flush=True)
-
-    def set_fc_adjacency(self, sid: int, adj: torch.Tensor):
-        """Register a pre-computed adjacency matrix for a subject."""
-        if self._fc_adj is None:
-            self._fc_adj = {}
-        dev = self.enc_channel.emb.weight.device
-        self._fc_adj[sid] = adj.to(dev)
 
     def attach_channel_adapter(
         self, adapter_type: str, *,
@@ -1130,56 +652,25 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
             self.ecog_fuser = ECoGChannelAdapter(E, hidden=hidden).to(dev)
             return
 
-        # KNN and GP families require ecog_xyz_m
-        _spatial_types = ("knn_hard", "knn_fourier", "knn_soft", "knn_soft_fourier",
-                          "gp_hard", "gp_fourier")
-        if adapter_type in _spatial_types and ecog_xyz_m is None:
-            raise ValueError(f"{adapter_type} requires ecog_xyz_m (ECoG electrode positions in meters)")
+        # The spatial adapter needs electrode coordinates.
+        if adapter_type == "knn_soft_fourier" and ecog_xyz_m is None:
+            raise ValueError(
+                "knn_soft_fourier requires ecog_xyz_m (ECoG electrode positions in meters)")
         if ecog_xyz_m is not None:
             ecog_xyz_m = ecog_xyz_m.to(device=dev, dtype=torch.float32)
 
-        if adapter_type == "zero_mlp":
-            self.channel_adapter = ZeroMLPAdapter(D, hidden=hidden).to(dev)
+        if adapter_type == "knn_soft_fourier":
+            # Replaces enc_channel entirely: learnable soft attention over the
+            # pretrained EEG electrode bank (KNN-initialised), plus a Fourier
+            # residual on the raw coordinates. This is CORTEG's spatial adapter.
+            self.channel_adapter = KNNSoftFourierAdapter(
+                E, ecog_xyz_m, k=knn_k, sigma=knn_sigma, hidden=hidden,
+                use_full_table=use_full_table).to(dev)
             self._channel_adapter_mode = "replace"
-        elif adapter_type == "additive_mlp":
-            self.channel_adapter = ZeroMLPAdapter(D, hidden=hidden).to(dev)
-            self._channel_adapter_mode = "additive"
-        elif adapter_type == "fourier_add":
-            self.channel_adapter = FourierMLPAdapter(D, hidden=hidden).to(dev)
-            self._channel_adapter_mode = "additive"
-        elif adapter_type == "direct_fourier":
-            self.channel_adapter = FourierMLPAdapter(D, hidden=hidden).to(dev)
-            self._channel_adapter_mode = "replace"
-        elif adapter_type == "subspace":
-            self.channel_adapter = SubspaceAdapter(E, hidden=hidden).to(dev)
-            self._channel_adapter_mode = "additive"
-        elif adapter_type == "soft_lookup_add":
-            self.channel_adapter = SoftLookupAdditiveAdapter(E, hidden=hidden).to(dev)
-            self._channel_adapter_mode = "additive"
-        elif adapter_type == "coord_pe":
-            self.channel_adapter = CoordPEAdapter(D).to(dev)
-            self._channel_adapter_mode = "additive"
-        # --- KNN family: REPLACE enc_channel entirely with spatial interpolation ---
-        elif adapter_type == "knn_hard":
-            self.channel_adapter = KNNHardAdapter(E, ecog_xyz_m, k=knn_k, sigma=knn_sigma).to(dev)
-            self._channel_adapter_mode = "replace"
-        elif adapter_type == "knn_fourier":
-            self.channel_adapter = KNNFourierAdapter(E, ecog_xyz_m, k=knn_k, sigma=knn_sigma, hidden=hidden).to(dev)
-            self._channel_adapter_mode = "replace"
-        elif adapter_type == "knn_soft":
-            self.channel_adapter = KNNSoftAdapter(E, ecog_xyz_m, k=knn_k, sigma=knn_sigma, hidden=hidden).to(dev)
-            self._channel_adapter_mode = "replace"
-        elif adapter_type == "knn_soft_fourier":
-            self.channel_adapter = KNNSoftFourierAdapter(E, ecog_xyz_m, k=knn_k, sigma=knn_sigma, hidden=hidden,
-                                                          use_full_table=use_full_table).to(dev)
-            self._channel_adapter_mode = "replace"
-        # --- GP family: REPLACE enc_channel with GP posterior over pretrained embeddings ---
-        elif adapter_type == "gp_hard":
-            self.channel_adapter = GPHardAdapter(E, ecog_xyz_m).to(dev)
-            self._channel_adapter_mode = "replace"
-        elif adapter_type == "gp_fourier":
-            self.channel_adapter = GPFourierAdapter(E, ecog_xyz_m, hidden=hidden).to(dev)
-            self._channel_adapter_mode = "replace"
+        else:
+            raise ValueError(
+                f"Unknown channel_adapter={adapter_type!r}. "
+                "This release ships 'none' and 'knn_soft_fourier'.")
 
     # -------------------------
     # Forward
@@ -1259,59 +750,7 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
         if tok_hi is not None:
             tok_hi = tok_hi + t_emb + ch_emb
 
-        # 3a. FC Graph Adapter: apply GAT over channel dimension
-        if self.fc_graph_adapter is not None and sid is not None and self._fc_adj:
-            assert (sid == sid[0]).all(), "FC graph adapter requires homogeneous batches (single subject per batch)"
-            tok_lo_4d = tok_lo.reshape(b, seq, c_out, d)
-            ch_repr = tok_lo_4d.mean(dim=1)  # (B, C, D)
-            first_sid = sid[0].item()
-            if first_sid in self._fc_adj:
-                adj = self._fc_adj[first_sid]  # already on model device
-                if adj.shape[0] == c_out:
-                    ch_updated = self.fc_graph_adapter(ch_repr, adj)  # (B, C, D)
-                    delta = (ch_updated - ch_repr).unsqueeze(1).expand(-1, seq, -1, -1)
-                    tok_lo = tok_lo + delta.reshape(b, n, d)
-                    if tok_hi is not None:
-                        tok_hi = tok_hi + delta.reshape(b, n, d)
-
-        # 3b. SPVAE latent router: compute per-channel precision gate
         self.last_aux = {}
-        self._spvae_alpha_per_channel = None
-        if self.use_spvae and tok_hi is not None:
-            # Pool across time per channel: (B, Seq, C, D) → (B*C, D)
-            g_lo = tok4.mean(dim=1).reshape(b * c_out, d)
-            g_hi = tok_hi4.mean(dim=1).reshape(b * c_out, d)
-
-            # Encode shared + private latents
-            mu_s_lo, lv_s_lo = self.enc_s_lo(g_lo)
-            mu_s_hi, lv_s_hi = self.enc_s_hi(g_hi)
-            mu_p_lo, lv_p_lo = self.enc_p_lo(g_lo)
-            mu_p_hi, lv_p_hi = self.enc_p_hi(g_hi)
-
-            # PoE aggregation of shared latents
-            mu_s, lv_s = _poe_diag_gaussians(mu_s_lo, lv_s_lo, mu_s_hi, lv_s_hi)
-
-            # KL losses
-            kl_shared = (_gauss_kl_std_normal(mu_s_lo, lv_s_lo)
-                         + _gauss_kl_std_normal(mu_s_hi, lv_s_hi)
-                         + _gauss_kl_std_normal(mu_s, lv_s))
-            kl_private = (_gauss_kl_std_normal(mu_p_lo, lv_p_lo)
-                          + _gauss_kl_std_normal(mu_p_hi, lv_p_hi))
-            loss_agree_raw = (mu_s_lo - mu_s_hi).pow(2).mean()
-
-            loss_spvae = (self.spvae_beta_s * kl_shared
-                          + self.spvae_beta_p * kl_private
-                          + self.spvae_lambda_agree * loss_agree_raw)
-            self.last_aux["loss_spvae"] = loss_spvae
-            self.last_aux["agree_raw"] = loss_agree_raw.detach()
-
-            # Precision gate from private latent variances: (B, C)
-            zp = lv_p_lo.shape[-1]
-            prec_lo = torch.exp(-lv_p_lo.view(b, c_out, zp)).mean(dim=-1)
-            prec_hi = torch.exp(-lv_p_hi.view(b, c_out, zp)).mean(dim=-1)
-            alpha_BC = prec_hi / (prec_lo + prec_hi + 1e-8)  # (B, C)
-            self._spvae_alpha_per_channel = alpha_BC.detach()
-            self.last_aux["router_alpha"] = alpha_BC.mean().detach()
 
         # 4. CLS + lo assembly
         cls = (self.cls_token + self.enc_time.cls_token_pe().to(x.device)).expand(b, -1, -1)
@@ -1376,32 +815,8 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
         if hi_processed is not None:
             lo_part = tok[:, _prefix_len:, :]      # [B, N, D] (skip CLS + prompts)
             hi_part = hi_processed                 # [B, N, D]
-
-            if self.merge_strategy == "spvae_router" and self._spvae_alpha_per_channel is not None:
-                # Per-channel precision gate: expand (B,C) → (B,N)
-                alpha = self._spvae_alpha_per_channel.to(lo_part.dtype)
-                # alpha is (B, C), expand to (B, seq*C) = (B, N)
-                alpha_BN = alpha.unsqueeze(1).expand(b, seq, c_out).reshape(b, n, 1)
-                merged = (1.0 - alpha_BN) * lo_part + alpha_BN * hi_part
-                self._last_gate_mean = alpha.mean().item()
-
-            elif self.merge_strategy in ("learned_router", "hi_lora_router"):
-                merged, gate = self.learned_router(lo_part, hi_part)
-                self._last_gate_mean = gate.mean().item()
-
-            elif self.merge_strategy == "cross_attn":
-                # lo attends to hi, with residual
-                attn_out, _ = self.cross_attn_layer(
-                    lo_part.transpose(0, 1),
-                    hi_part.transpose(0, 1),
-                    hi_part.transpose(0, 1),
-                )
-                merged = lo_part + attn_out.transpose(0, 1)
-
-            else:
-                # "average" and "hi_lora": fixed 0.5/0.5
-                merged = 0.5 * lo_part + 0.5 * hi_part
-
+            # "average": fixed 0.5/0.5 fusion at layer k
+            merged = 0.5 * lo_part + 0.5 * hi_part
             tok = torch.cat([tok[:, :_prefix_len, :], merged], dim=1)
 
         # 7. Late blocks (LoRA)

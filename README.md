@@ -97,8 +97,6 @@ docs/                 Live interactive demo (Three.js + Plotly, no backend)
 | Table 1, CORTEG pooled (Stanford) | `scripts/table1_corteg_pooled_stanford.sh` |
 | Table 1, CORTEG LOO-FT | `scripts/table1_corteg_loo_ft.sh <subject>` |
 | Table 1, classical baselines | *not in this release* — see [`REPRODUCE.md`](REPRODUCE.md) |
-| Table 2, ablations | `scripts/table2_ablations.sh` |
-| Fig 2(b,d), scaling + low-data | `scripts/fig2_scaling_and_lowdata.sh` |
 
 Full reproduction recipe: [`REPRODUCE.md`](REPRODUCE.md).
 

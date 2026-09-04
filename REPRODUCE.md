@@ -32,14 +32,9 @@ subject. The full Table 2 ablation sweep is ≈70 GPU-hours.
 | Classical baselines | *Not in this release.* `experiments/run_ecog_baselines.py` implements PLS, HOPLS, LSTM and HiLoFuseNet, but is Ghent-only (no `--dataset` argument, Ghent loader hardcoded); Ridge is not implemented at all. |
 | DeepFingerNet | Transcribed from its original paper (Table II). |
 
-## Table 2 — Ablation study
+## Baseline comparisons
 
-```bash
-bash scripts/table2_ablations.sh
-```
-
-The foundation-model ablation rows (LaBraM, CBraMod, MantisV2) use dedicated
-runners:
+The foundation-model baselines use dedicated runners:
 
 ```bash
 python -m experiments.run_labram_baseline   --dataset Stanford --train_mode pooled --seed 42
@@ -49,15 +44,6 @@ python -m experiments.run_mantis_baseline   --dataset Stanford --train_mode pool
 
 See [CHECKPOINTS.md](CHECKPOINTS.md) for their pretrained weights.
 
-## Figure 2 — Scaling, compute, low-data
-
-```bash
-bash scripts/fig2_scaling_and_lowdata.sh
-```
-
-Panel (a) (per-subject vs. LOO-FT vs. pooled comparison) is produced by the
-Table 1 commands above. Panel (c) (inference vs. training time per backbone)
-is derived from the checkpoints emitted by the scaling sweep.
 
 ## Figure 3 — Neural manifold & electrode importance
 

@@ -3,7 +3,7 @@
 """Runner for Hi-Lo merge-strategy experiments.
 
 Supports MSE loss with optional SPVAE auxiliary loss (KL + agreement).
-Merge strategies: average, hi_lora, learned_router, cross_attn, spvae_router.
+Merge strategies: average (fixed fusion at layer k) and layerwise_gate (gated fusion).
 """
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, ConcatDataset
 
 from data.io import load_subject
-from data.scalers import compute_ea_whitening, apply_ea
 from data.splits import TailSplit
 from data.scalers import (
     fit_zscore_2d, apply_zscore_2d,
@@ -53,43 +52,19 @@ from models.steegformer.lora import inject_switchable_lora_blocks, SwitchableLoR
 # Step function — pure MSE
 # ============================================================
 
-def make_step_fn(
-    stream: str = "both",
-    sp_weight: float = 1.0,
-    input_noise_std: float = 0.0,
-    channel_drop_prob: float = 0.0,
-):
-    """Create step function.
+def make_step_fn(stream: str = "both"):
+    """Create the training/eval step function.
 
     stream:
         "both"    — default, lo + hi fusion
-        "lo_only" — no hi tokens (x_hi=None), measures lo ceiling
-        "hi_only" — hi fed as x_raw through lo pathway, no fusion.
-    sp_weight:
-        Weight for SPVAE auxiliary loss (KL + agreement).  0 = no SPVAE loss.
-    input_noise_std:
-        Std of Gaussian noise added to inputs during training (0 = off).
-    channel_drop_prob:
-        Probability of dropping entire ECoG channels during training (0 = off).
+        "lo_only" — no hi tokens (x_hi=None), measures the lo-stream ceiling
+        "hi_only" — hi fed as x_raw through the lo pathway, no fusion
     """
     def step_fn(model: nn.Module, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         y = batch["y"]
         xyz = batch.get("ecog_xyz", None)
         x_lo = batch["x_raw"]
         x_hi = batch.get("x_hi", None)
-
-        # --- Input augmentation (training only) ---
-        if model.training:
-            if input_noise_std > 0:
-                x_lo = x_lo + input_noise_std * torch.randn_like(x_lo)
-                if x_hi is not None:
-                    x_hi = x_hi + input_noise_std * torch.randn_like(x_hi)
-            if channel_drop_prob > 0:
-                B, C, T = x_lo.shape
-                mask = (torch.rand(B, C, 1, device=x_lo.device) > channel_drop_prob).float()
-                x_lo = x_lo * mask
-                if x_hi is not None:
-                    x_hi = x_hi * mask
 
         if stream == "lo_only":
             out = model(x_lo, x_hi=None, ecog_xyz=xyz, return_losses=True)
@@ -98,15 +73,7 @@ def make_step_fn(
         else:
             out = model(x_lo, x_hi=x_hi, ecog_xyz=xyz, return_losses=True)
         y_hat = out["y_hat"]
-        loss = torch.mean((y_hat - y) ** 2)
-
-        # Add SPVAE auxiliary loss if present
-        backbone = getattr(model, "backbone", model)
-        loss_spvae = backbone.last_aux.get("loss_spvae", None) if hasattr(backbone, "last_aux") else None
-        if loss_spvae is not None and sp_weight > 0:
-            loss = loss + sp_weight * loss_spvae
-
-        return {"y_hat": y_hat, "loss": loss}
+        return {"y_hat": y_hat, "loss": torch.mean((y_hat - y) ** 2)}
     return step_fn
 
 
@@ -224,67 +191,6 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
             trust_checkpoint=True,
         )
 
-    # Channel embedding controls
-    ch_mode = getattr(args, "channel_embed_mode", "pretrained_learnable")
-    if ch_mode.startswith("random"):
-        # Reset to default zero init (same as unpretrained backbone)
-        nn.init.zeros_(backbone.enc_channel.emb.weight)
-        print(f"  [channel_embed] Reset to zeros — no pretrained spatial info (mode={ch_mode})")
-    if ch_mode.endswith("frozen"):
-        backbone.enc_channel.emb.weight.requires_grad = False
-        print(f"  [channel_embed] Frozen (mode={ch_mode})")
-
-    if getattr(args, "shuffle_channel_embed", False):
-        with torch.no_grad():
-            w = backbone.enc_channel.emb.weight.data
-            perm = torch.randperm(w.shape[0])
-            backbone.enc_channel.emb.weight.data = w[perm]
-        print(f"  [channel_embed] Shuffled rows (spatial mapping destroyed)")
-    if getattr(args, "synthetic_codebook", False):
-        with torch.no_grad():
-            w = backbone.enc_channel.emb.weight.data
-            norms = w.norm(dim=1, keepdim=True)
-            rand_dirs = torch.randn_like(w)
-            rand_dirs = rand_dirs / (rand_dirs.norm(dim=1, keepdim=True) + 1e-8)
-            backbone.enc_channel.emb.weight.data = rand_dirs * norms
-        print(f"  [channel_embed] Synthetic codebook (matched norms, random directions)")
-
-    # Layer-wise transfer ablation
-    reinit = getattr(args, "reinit_components", "none")
-    if reinit != "none":
-        merge_k = backbone.merge_block_idx
-        def _reinit_block(blk):
-            for m in blk.modules():
-                if isinstance(m, nn.Linear):
-                    nn.init.xavier_uniform_(m.weight)
-                    if m.bias is not None:
-                        nn.init.zeros_(m.bias)
-                elif isinstance(m, nn.LayerNorm):
-                    nn.init.ones_(m.weight)
-                    nn.init.zeros_(m.bias)
-
-        if reinit in ("early_blocks", "all_blocks", "all_except_channel"):
-            for blk in backbone.blocks[:merge_k]:
-                _reinit_block(blk)
-            print(f"  [reinit] Early blocks 0-{merge_k-1} reinitialized")
-        if reinit in ("late_blocks", "all_blocks", "all_except_channel"):
-            for blk in backbone.blocks[merge_k:]:
-                _reinit_block(blk)
-            print(f"  [reinit] Late blocks {merge_k}-{len(backbone.blocks)-1} reinitialized")
-        if reinit in ("patch_embed", "all_except_channel"):
-            _reinit_block(backbone.patch_embed)
-            print(f"  [reinit] patch_embed reinitialized")
-        if reinit == "all_except_channel":
-            if hasattr(backbone, 'norm'):
-                nn.init.ones_(backbone.norm.weight)
-                nn.init.zeros_(backbone.norm.bias)
-            print(f"  [reinit] all_except_channel: everything except enc_channel reinitialized")
-
-    # Warm-start hi patch embed by interpolating pretrained lo weights
-    # (skip for hi_only: lo patch_embed has different size, nothing to copy from)
-    if getattr(args, "stream", "both") != "hi_only":
-        _init_hi_embed_from_lo(backbone)
-
     # Attach channel adapter (must be after pretrained load)
     adapter_type = getattr(args, "channel_adapter", "none")
     if adapter_type != "none":
@@ -325,20 +231,6 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
         )
         print(f"  ecog_fuser attached (M={args.M_EEG}, hidden={args.fuser_hidden})", flush=True)
 
-    # Attach SPVAE latent router (must be after pretrained load)
-    if getattr(args, "use_spvae", False):
-        backbone.attach_spvae(
-            z_shared_dim=int(args.spvae_z_shared_dim),
-            z_private_dim=int(args.spvae_z_private_dim),
-            hidden=int(args.spvae_hidden),
-            beta_s=float(args.spvae_beta_s),
-            beta_p=float(args.spvae_beta_p),
-            lambda_agree=float(args.spvae_lambda_agree),
-        )
-        print(f"  SPVAE attached (zs={args.spvae_z_shared_dim}, zp={args.spvae_z_private_dim}, "
-              f"beta_s={args.spvae_beta_s}, beta_p={args.spvae_beta_p}, "
-              f"agree={args.spvae_lambda_agree})", flush=True)
-
     model = HiLoCleanRegressor(
         backbone=backbone,
         d_out=d_out,
@@ -362,10 +254,6 @@ def unfreeze_merge_params(model: nn.Module):
     strategy = getattr(b, "merge_strategy", "average")
     # Map strategy -> attribute names to unfreeze
     names = {
-        "learned_router": ["learned_router"],
-        "hi_lora_router": ["learned_router"],
-        "cross_attn": ["cross_attn_layer"],
-        "spvae_router": ["enc_s_lo", "enc_s_hi", "enc_p_lo", "enc_p_hi"],
         "layerwise_gate": ["layerwise_gate"],
     }.get(strategy, [])
     for name in names:
@@ -379,37 +267,6 @@ def unfreeze_merge_params(model: nn.Module):
         if mod is not None:
             for p in mod.parameters():
                 p.requires_grad = True
-    # Always unfreeze SPVAE encoders if attached (even if merge != spvae_router,
-    # the SPVAE loss still trains them)
-    if getattr(b, "use_spvae", False):
-        for enc_name in ("enc_s_lo", "enc_s_hi", "enc_p_lo", "enc_p_hi"):
-            mod = getattr(b, enc_name, None)
-            if mod is not None:
-                for p in mod.parameters():
-                    p.requires_grad = True
-
-
-def _is_hi_param(name: str, backbone) -> bool:
-    """Check if a named parameter belongs to the hi-freq pathway."""
-    if "patch_embed_hi" in name:
-        return True
-    # SwitchableLoRA adapters in early blocks (blocks 0..merge_k-1)
-    if hasattr(backbone, "merge_block_idx"):
-        merge_k = backbone.merge_block_idx
-        for bi in range(merge_k):
-            prefix = f"backbone.blocks.{bi}."
-            if name.startswith(prefix) and (".A." in name or ".B." in name):
-                return True
-    # Merge modules (router, cross-attn)
-    if ("learned_router" in name or "cross_attn_layer" in name
-            or "layerwise_gate" in name):
-        return True
-    # ECoG fuser / channel adapter adapts to hi-freq too
-    if "ecog_fuser" in name or "channel_adapter" in name:
-        return True
-    return False
-
-
 def configure_finetune_modules(model: nn.Module, modules: list, lora_last_n: int,
                                lora_targets: tuple = ("qkv", "proj", "fc1", "fc2")):
     """Freeze all, then selectively unfreeze specified module groups for stage-2 finetuning.
@@ -464,73 +321,6 @@ def configure_finetune_modules(model: nn.Module, modules: list, lora_last_n: int
                     set_requires_grad(mod, True)
 
 
-def reinit_lora(model: nn.Module, lora_last_n: int):
-    """Re-initialize LoRA A/B weights to their fresh state (B=0, A=kaiming).
-
-    Use after loading a pooled checkpoint so LoRA starts fresh for per-subject
-    training, while the backbone base weights retain the population prior.
-    """
-    backbone = getattr(model, "backbone", model)
-    blocks = backbone.blocks if hasattr(backbone, "blocks") else []
-    depth = len(blocks)
-    start = max(0, depth - lora_last_n)
-    count = 0
-    for bi in range(start, depth):
-        for m in blocks[bi].modules():
-            if isinstance(m, LoRALinear):
-                nn.init.kaiming_uniform_(m.A.weight, a=np.sqrt(5))
-                nn.init.zeros_(m.B.weight)
-                count += 1
-    print(f"  Re-initialized {count} LoRA modules to fresh state", flush=True)
-
-
-def compute_prior_reg(model: nn.Module, prior_state: dict) -> torch.Tensor:
-    """Compute L2 penalty toward pooled prior weights (Empirical Bayes MAP).
-
-    Returns: scalar tensor  Σ_i ‖θ_i - θ_i^pool‖²  over all trainable params
-    that exist in prior_state.
-    """
-    penalty = torch.tensor(0.0, device=next(model.parameters()).device)
-    for name, param in model.named_parameters():
-        if param.requires_grad and name in prior_state:
-            penalty = penalty + torch.sum((param - prior_state[name]) ** 2)
-    return penalty
-
-
-def inject_hi_lora(model: nn.Module, args):
-    """For hi_lora strategy: inject SwitchableLoRA into early blocks.
-
-    SwitchableLoRA wraps each target Linear so that:
-      - enabled=False → pure frozen base(x)       (used for lo tokens)
-      - enabled=True  → base(x) + LoRA(x)         (used for hi tokens)
-
-    Only the LoRA adapter params (A, B) are trainable. The base weights stay frozen.
-    """
-    b = getattr(model, "backbone", None)
-    if b is None or not hasattr(b, "blocks"):
-        return
-    merge_k = b.merge_block_idx
-    if merge_k <= 0:
-        return
-    targets = tuple(t.strip() for t in args.lora_targets.split(",") if t.strip())
-    early_indices = list(range(merge_k))
-    inject_switchable_lora_blocks(
-        model, early_indices,
-        r=int(args.lora_r), alpha=int(args.lora_alpha),
-        dropout=float(args.lora_dropout), targets=targets,
-    )
-    # Unfreeze LayerNorms in early blocks so they can adapt to hi input
-    for bi in early_indices:
-        for m in b.blocks[bi].modules():
-            if isinstance(m, nn.LayerNorm):
-                for p in m.parameters():
-                    p.requires_grad = True
-
-
-# ============================================================
-# Prediction / representation extraction
-# ============================================================
-
 def save_predictions(model, loader, save_dir, device, use_amp=True, stream="both"):
     """Extract and save predictions + mean-pooled representations.
 
@@ -572,14 +362,11 @@ def main():
 
     # Data
     p.add_argument("--dataset", type=str, default="Stanford",
-                    choices=["Stanford", "Ghent"])
+                    choices=["Stanford"])
     p.add_argument("--step_ms", type=int, default=0,
-                    help="Training window step in ms for Ghent (0=use default: 200 Ghent)")
+                    help="Training window step in ms (0 = dataset default)")
     p.add_argument("--eval_step_ms", type=int, default=50,
-                    help="Evaluation window step in ms for Ghent (default 50=20Hz)")
-    p.add_argument("--target_mode", type=str, default="endpoint",
-                    choices=["endpoint", "mean"],
-                    help="Ghent target: endpoint (last sample) or mean (window avg)")
+                    help="Evaluation window step in ms")
     p.add_argument("--data_root", type=str, default="")
     p.add_argument("--val_ratio", type=float, default=0.1)
     p.add_argument("--train_mode", type=str, default="per_subject",
@@ -607,10 +394,6 @@ def main():
                     help="Hidden dim for 2-layer MLP head (0 = single linear)")
 
     # Input regularization
-    p.add_argument("--input_noise_std", type=float, default=0.0,
-                    help="Gaussian noise std added to inputs during training")
-    p.add_argument("--channel_drop_prob", type=float, default=0.0,
-                    help="Probability of dropping entire ECoG channels during training")
 
     # LoRA
     p.add_argument("--lora_last_n", type=int, default=4)
@@ -623,8 +406,9 @@ def main():
     p.add_argument("--hi_patch_size", type=int, default=25)
     p.add_argument("--hi_inject_last_n", type=int, default=4)
     p.add_argument("--merge_strategy", type=str, default="average",
-                    choices=["average", "hi_lora", "learned_router", "cross_attn",
-                             "spvae_router", "hi_lora_router", "layerwise_gate"])
+                    choices=["average", "layerwise_gate"],
+                    help="average = fixed 0.5/0.5 fusion at layer k; "
+                         "layerwise_gate = one learned gate per block")
     p.add_argument("--layerwise_gate_bottleneck", type=int, default=16,
                     help="Hidden width of the layer-wise gate MLP")
     p.add_argument("--layerwise_gate_act", type=str, default="tanh",
@@ -635,9 +419,6 @@ def main():
     p.add_argument("--stream", type=str, default="both",
                     choices=["both", "lo_only", "hi_only"],
                     help="Which stream(s) to use: both (default), lo_only, hi_only")
-    p.add_argument("--hi_lr_mult", type=float, default=1.0,
-                    help="LR multiplier for hi-freq params (patch_embed_hi, "
-                         "SwitchableLoRA in early blocks, merge modules)")
 
     # ECoG channel adapter
     p.add_argument("--use_ecog_fuser", action="store_true")
@@ -647,42 +428,22 @@ def main():
                              "knn_hard", "knn_fourier", "knn_soft", "knn_soft_fourier",
                              "gp_hard", "gp_fourier"],
                     help="Channel adaptation method (requires --use_ecog_fuser for xyz data)")
-    p.add_argument("--M_EEG", type=int, default=145)
-    p.add_argument("--fuser_hidden", type=int, default=128)
+    p.add_argument("--M_EEG", type=int, default=145,
+                    help="Size of the pretrained EEG electrode codebook")
+    p.add_argument("--fuser_hidden", type=int, default=128,
+                    help="Hidden width of the spatial adapter")
     p.add_argument("--knn_k", type=int, default=8, help="Number of nearest EEG neighbours for KNN adapters")
     p.add_argument("--use_full_codebook", action="store_true",
                     help="Use the full EEG embedding table (e.g. 256 slots for HBN) in KNNSoft adapter, instead of capping at 142 positioned channels")
     p.add_argument("--knn_sigma", type=float, default=None, help="Gaussian bandwidth for KNN (None=auto)")
 
     # SPVAE latent router
-    p.add_argument("--use_spvae", action="store_true", help="Attach SPVAE encoders for precision-gated merge")
-    p.add_argument("--spvae_z_shared_dim", type=int, default=128)
-    p.add_argument("--spvae_z_private_dim", type=int, default=128)
-    p.add_argument("--spvae_hidden", type=int, default=256)
-    p.add_argument("--spvae_beta_s", type=float, default=1e-4, help="KL weight for shared latent")
-    p.add_argument("--spvae_beta_p", type=float, default=1e-3, help="KL weight for private latent")
-    p.add_argument("--spvae_lambda_agree", type=float, default=1e-3, help="Agreement loss weight")
-    p.add_argument("--sp_weight", type=float, default=1.0, help="Weight for total SPVAE aux loss")
 
     # Transfer ablation controls
     p.add_argument("--no_pretrained", action="store_true",
                     help="Skip pretrained weight loading (random init)")
     p.add_argument("--full_finetune", action="store_true",
                     help="Train ALL parameters (no freeze, no LoRA) — fair scratch baseline")
-    p.add_argument("--channel_embed_mode", type=str, default="pretrained_learnable",
-                    choices=["pretrained_learnable", "pretrained_frozen",
-                             "random_learnable", "random_frozen"],
-                    help="Channel embedding ablation: pretrained/random x learnable/frozen")
-    p.add_argument("--shuffle_channel_embed", action="store_true",
-                    help="Randomly permute channel embedding rows (breaks spatial mapping)")
-    p.add_argument("--synthetic_codebook", action="store_true",
-                    help="Replace channel embed with norm-matched random vectors")
-    p.add_argument("--reinit_components", type=str, default="none",
-                    choices=["none", "early_blocks", "late_blocks", "all_blocks",
-                             "patch_embed", "all_except_channel"],
-                    help="Reinitialize specific pretrained components to isolate transfer")
-    p.add_argument("--train_fraction", type=float, default=1.0,
-                    help="Fraction of training data to use (for low-data curves)")
     p.add_argument("--xyz_mode", type=str, default="real",
                     choices=["real", "shuffled", "zero", "random"],
                     help="Geometry ablation: real=actual XYZ, shuffled=permute within subject, "
@@ -693,10 +454,6 @@ def main():
                          "residual, fourier_only=disable soft lookup")
 
     # Euclidean Alignment preprocessing
-    p.add_argument("--use_ea", action="store_true",
-                    help="Apply Euclidean Alignment (covariance whitening) before z-score")
-    p.add_argument("--ea_shrinkage", type=float, default=0.1,
-                    help="EA shrinkage toward identity (0=pure whitening, 1=identity)")
 
     # Stage-2 finetuning (Empirical Bayes: pooled LOO → per-subject adaptation)
     p.add_argument("--exclude_subjects", type=str, default="",
@@ -709,10 +466,6 @@ def main():
                     help="Comma-separated subjects for finetuning (empty = all)")
     p.add_argument("--finetune_lora_targets", type=str, default="qkv,proj,fc1,fc2",
                     help="Which LoRA modules to unfreeze in stage-2 (e.g. 'qkv' for minimal)")
-    p.add_argument("--prior_reg_weight", type=float, default=0.0,
-                    help="L2 regularization toward pooled prior (Empirical Bayes MAP). 0=off")
-    p.add_argument("--reinit_lora", action="store_true",
-                    help="Re-initialize LoRA A/B to fresh state after loading checkpoint")
     p.add_argument("--finetune_lr_lora", type=float, default=0.0,
                     help="Separate LR for LoRA params in stage-2 (0=use main --lr)")
     p.add_argument("--finetune_lr_adapter", type=float, default=0.0,
@@ -740,58 +493,14 @@ def main():
         f"merge_strategy={args.merge_strategy} "
         f"hi_inject_last_n={args.hi_inject_last_n} "
         f"lora_last_n={args.lora_last_n} lora_r={args.lora_r} "
-        f"hi_lr_mult={args.hi_lr_mult} channel_adapter={args.channel_adapter}",
+        f"channel_adapter={args.channel_adapter}",
         flush=True,
     )
 
-    step_fn = make_step_fn(
-        stream=args.stream,
-        sp_weight=float(args.sp_weight),
-        input_noise_std=float(getattr(args, "input_noise_std", 0.0)),
-        channel_drop_prob=float(getattr(args, "channel_drop_prob", 0.0)),
-    )
+    step_fn = make_step_fn(stream=args.stream)
 
     # ---- Dataset-specific data loading ----
-    if args.dataset == "Ghent":
-        # Ghent speech envelope: on-the-fly HDF5 windows, runtime z-score normalized
-        from data.ghent_loader import load_ghent_datasets, get_ghent_subjects
-
-        ghent_data_root = args.data_root if args.data_root else ""
-        ghent_subjects = get_ghent_subjects(data_root=ghent_data_root)
-        step_ms = args.step_ms if args.step_ms > 0 else 200  # default 200ms train step
-        eval_step_ms = args.eval_step_ms  # default 50ms = 20 Hz eval
-        tr_list, va_list, te_list, shapes_by_sid, xyz_bank, collate_fn, d_out, xyz_mm = \
-            load_ghent_datasets(
-                subjects=ghent_subjects,
-                data_root=args.data_root if args.data_root else "",
-                step_ms=step_ms,
-                eval_step_ms=eval_step_ms,
-                target_mode=args.target_mode,
-                need_xyz=need_xyz,
-            )
-        subjects = ghent_subjects
-
-        # Geometry ablation for Ghent: transform XYZ after loading
-        if args.xyz_mode != "real" and need_xyz and xyz_mm is not None:
-            rng_xyz = np.random.RandomState(args.seed)
-            for i in range(len(xyz_mm)):
-                if xyz_mm[i] is None:
-                    continue
-                C = xyz_mm[i].shape[0]
-                if args.xyz_mode == "shuffled":
-                    perm = rng_xyz.permutation(C)
-                    xyz_mm[i] = xyz_mm[i][perm]
-                elif args.xyz_mode == "zero":
-                    xyz_mm[i] = np.zeros_like(xyz_mm[i])
-                elif args.xyz_mode == "random":
-                    lo = xyz_mm[i].min(axis=0)
-                    hi = xyz_mm[i].max(axis=0)
-                    xyz_mm[i] = rng_xyz.uniform(lo, hi, size=(C, 3)).astype(np.float32)
-            # Rebuild xyz_bank and collate_fn with transformed coordinates
-            xyz_bank = SubjectXYZBank.from_mm(xyz_mm)
-            collate_fn = make_collate_fn(xyz_bank)
-            print(f"  [xyz_mode={args.xyz_mode}] Ghent XYZ coordinates transformed")
-    else:
+    if True:
         # Stanford finger trajectory: pre-epoched pickle format
         d_out = 5
         datasets_meta = {
@@ -837,14 +546,6 @@ def main():
             n = int(sd.y_tr.shape[0])
             idx_tr, idx_val = split.split(n)
 
-            # Low-data ablation: subsample training indices
-            train_frac = getattr(args, "train_fraction", 1.0)
-            if train_frac < 1.0:
-                rng = np.random.RandomState(args.seed)
-                n_keep = max(1, int(len(idx_tr) * train_frac))
-                idx_tr = rng.choice(idx_tr, size=n_keep, replace=False)
-                idx_tr.sort()
-
             y_stats = fit_zscore_2d(sd.y_tr[idx_tr])
             y_tr = apply_zscore_2d(sd.y_tr[idx_tr], y_stats)
             y_val = apply_zscore_2d(sd.y_tr[idx_val], y_stats)
@@ -853,31 +554,15 @@ def main():
             x_raw_tr0, x_raw_val0 = sd.X_raw_tr[idx_tr], sd.X_raw_tr[idx_val]
             x_hi_tr0, x_hi_val0 = sd.X_feat_tr[idx_tr][..., 0], sd.X_feat_tr[idx_val][..., 0]
 
-            # Euclidean Alignment: apply BEFORE z-score normalization
-            if getattr(args, "use_ea", False):
-                if sid == 0:
-                    print(f"  EA enabled: shrinkage={args.ea_shrinkage}", flush=True)
-                W_raw = compute_ea_whitening(x_raw_tr0, shrinkage=float(args.ea_shrinkage))
-                W_hi = compute_ea_whitening(x_hi_tr0, shrinkage=float(args.ea_shrinkage))
-                x_raw_tr0 = apply_ea(x_raw_tr0, W_raw)
-                x_raw_val0 = apply_ea(x_raw_val0, W_raw)
-                x_hi_tr0 = apply_ea(x_hi_tr0, W_hi)
-                x_hi_val0 = apply_ea(x_hi_val0, W_hi)
-                sd_X_raw_te = apply_ea(sd.X_raw_te, W_raw)
-                sd_X_feat_te_hi = apply_ea(sd.X_feat_te[..., 0], W_hi)
-            else:
-                sd_X_raw_te = sd.X_raw_te
-                sd_X_feat_te_hi = sd.X_feat_te[..., 0]
-
             raw_stats = fit_zscore_3d_per_channel(x_raw_tr0)
             hi_stats = fit_zscore_3d_per_channel(x_hi_tr0)
 
             x_tr = apply_zscore_3d_per_channel(x_raw_tr0, raw_stats)
             x_val = apply_zscore_3d_per_channel(x_raw_val0, raw_stats)
-            x_te = apply_zscore_3d_per_channel(sd_X_raw_te, raw_stats)
+            x_te = apply_zscore_3d_per_channel(sd.X_raw_te, raw_stats)
             h_tr = apply_zscore_3d_per_channel(x_hi_tr0, hi_stats)
             h_val = apply_zscore_3d_per_channel(x_hi_val0, hi_stats)
-            h_te = apply_zscore_3d_per_channel(sd_X_feat_te_hi, hi_stats)
+            h_te = apply_zscore_3d_per_channel(sd.X_feat_te[..., 0], hi_stats)
 
             tr_list.append(HiLoAddDataset(x_tr, h_tr, y_tr, sid))
             va_list.append(HiLoAddDataset(x_val, h_val, y_val, sid))
@@ -940,8 +625,6 @@ def main():
                 dropout=float(args.lora_dropout),
                 targets=tuple(t.strip() for t in args.lora_targets.split(",") if t.strip()),
             )
-            if args.merge_strategy in ("hi_lora", "hi_lora_router"):
-                inject_hi_lora(model, args)
             unfreeze_merge_params(model)
         log_detailed_trainable(model)
 
@@ -1085,8 +768,6 @@ def main():
                 dropout=float(args.lora_dropout),
                 targets=tuple(t.strip() for t in args.lora_targets.split(",") if t.strip()),
             )
-            if args.merge_strategy in ("hi_lora", "hi_lora_router"):
-                inject_hi_lora(model, args)
             unfreeze_merge_params(model)
 
             # Materialize lazy head before loading checkpoint
@@ -1140,10 +821,6 @@ def main():
                 model.head.head = model.head._build_head(in_dim, device)
                 print(f"  Token mode: {old_mode} → {args.finetune_token_mode} (head re-init: {in_dim} → {model.head.d_out})", flush=True)
 
-            # Plan B: optionally re-initialize LoRA to fresh state
-            if args.reinit_lora:
-                reinit_lora(model, int(args.lora_last_n))
-
             # Freeze all, then selectively unfreeze
             ft_lora_targets = tuple(
                 t.strip() for t in args.finetune_lora_targets.split(",") if t.strip()
@@ -1152,25 +829,7 @@ def main():
                                        lora_targets=ft_lora_targets)
             log_detailed_trainable(model)
 
-            # Plan A: store prior state for Empirical Bayes MAP regularization
-            prior_reg_weight = float(args.prior_reg_weight)
-            prior_state = {}
-            if prior_reg_weight > 0:
-                for name, param in model.named_parameters():
-                    if param.requires_grad:
-                        prior_state[name] = param.detach().clone()
-                print(f"  Prior reg: λ={prior_reg_weight}, {len(prior_state)} param tensors", flush=True)
-
-            # Wrap step_fn to add prior regularization
-            if prior_reg_weight > 0:
-                _base_step_fn = step_fn
-                def ft_step_fn(model, batch, _bsf=_base_step_fn, _ps=prior_state, _lam=prior_reg_weight):
-                    out = _bsf(model, batch)
-                    reg = compute_prior_reg(model, _ps)
-                    loss = out["loss"] + _lam * reg
-                    return {**out, "loss": loss, "loss_main": out["loss"], "loss_prior_reg": _lam * reg}
-            else:
-                ft_step_fn = step_fn
+            ft_step_fn = step_fn
 
             # Zero-shot: evaluate pooled checkpoint on this subject before any finetuning
             va_loader = DataLoader(va_list[sid], batch_size=64, collate_fn=collate_fn)
@@ -1215,14 +874,7 @@ def main():
             eng_cfg = EngineConfig(use_amp=bool(args.use_amp), accum_iter=int(args.accum_iter), max_norm=float(args.max_norm))
             early = EarlyStopper(patience=args.early_stop_patience)
 
-            # Apply train_fraction if specified (for low-data experiments)
             ft_train_ds = tr_list[sid]
-            train_frac = getattr(args, "train_fraction", 1.0)
-            if train_frac < 1.0:
-                n_total = len(ft_train_ds)
-                n_keep = max(1, int(n_total * train_frac))
-                ft_train_ds = torch.utils.data.Subset(ft_train_ds, list(range(n_keep)))
-                print(f"  train_fraction={train_frac}: {n_keep}/{n_total} samples", flush=True)
 
             tr_loader = DataLoader(
                 ft_train_ds, batch_size=args.batch_size, shuffle=True,
@@ -1236,8 +888,7 @@ def main():
                     scheduler.step()
                 val = evaluate(model, va_loader, device, step_fn=step_fn, use_amp=args.use_amp)
                 if ep % 20 == 0:
-                    reg_str = f" reg={tr.get('loss_prior_reg', 0):.4f}" if prior_reg_weight > 0 else ""
-                    print(f"[ep {ep+1}] mse={tr.get('loss_main', tr['loss']):.4f}{reg_str} | val={val['score']:.4f}", flush=True)
+                    print(f"[ep {ep+1}] mse={tr['loss']:.4f} | val={val['score']:.4f}", flush=True)
                 if early.step(val["score"], model):
                     break
 
@@ -1252,7 +903,6 @@ def main():
                 "variant": "finetune",
                 "subject": sub_name,
                 "modules": ft_modules,
-                "train_fraction": getattr(args, "train_fraction", 1.0),
                 "score": float(test_result["score"]),
                 "per_finger": [float(c) for c in rec["corr"]],
                 "mse": float(rec["mse"]),
@@ -1286,39 +936,11 @@ def main():
                 t.strip() for t in args.lora_targets.split(",") if t.strip()
             ),
         )
-        # hi_lora: also inject DualLoRA into the early (frozen) blocks
-        if args.merge_strategy in ("hi_lora", "hi_lora_router"):
-            inject_hi_lora(model, args)
-        # Unfreeze merge-specific modules (router, cross-attn)
+        # Unfreeze the merge-specific modules (the layer-wise gate)
         unfreeze_merge_params(model)
         log_detailed_trainable(model)
 
-        # Log strategy info at start
-        if args.merge_strategy in ("learned_router", "hi_lora_router"):
-            print(f"  router gate init = 0.5000 (zero-init)", flush=True)
-
-        # Per-modality LR: give hi-freq params a higher learning rate
-        hi_mult = float(args.hi_lr_mult)
-        if hi_mult != 1.0:
-            hi_params, other_params = [], []
-            for name, param in model.named_parameters():
-                if not param.requires_grad:
-                    continue
-                if _is_hi_param(name, model.backbone):
-                    hi_params.append(param)
-                else:
-                    other_params.append(param)
-            param_groups = [
-                {"params": other_params, "lr": args.lr},
-                {"params": hi_params, "lr": args.lr * hi_mult},
-            ]
-            print(
-                f"  Per-modality LR: {len(hi_params)} hi params @ "
-                f"{args.lr * hi_mult:.1e}, {len(other_params)} other @ "
-                f"{args.lr:.1e}", flush=True,
-            )
-        else:
-            param_groups = [p for p in model.parameters() if p.requires_grad]
+        param_groups = [p for p in model.parameters() if p.requires_grad]
 
         opt = torch.optim.AdamW(
             param_groups,
@@ -1356,7 +978,7 @@ def main():
 
             if ep % 20 == 0:
                 extra = ""
-                if args.merge_strategy in ("learned_router", "hi_lora_router"):
+                if args.merge_strategy == "layerwise_gate":
                     gate = model.backbone.get_router_gate_mean()
                     if gate is not None:
                         extra = f" gate={gate:.4f}"
@@ -1371,7 +993,7 @@ def main():
         early.restore(model)
 
         # Final gate log
-        if args.merge_strategy in ("learned_router", "hi_lora_router"):
+        if args.merge_strategy == "layerwise_gate":
             gate = model.backbone.get_router_gate_mean()
             if gate is not None:
                 print(f"  router gate final = {gate:.4f}", flush=True)
