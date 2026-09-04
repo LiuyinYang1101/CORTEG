@@ -243,9 +243,10 @@ checkpoints/corteg_stanford_pooled.pt     # 1.2 MB, 297,236 params — Table 1 f
 checkpoints/corteg_stanford_pooled.json   # manifest: sha256, paper number, exact build args
 ```
 
-It holds only the trainable parameters — LoRA A/B on blocks 4–7, the
-KNNSoftFourier adapter, LayerNorms and the head — so it must be loaded together
-with the backbone above.
+It holds only the trainable parameters — the KNNSoftFourier adapter (142,095),
+LoRA A/B on blocks 4–7 (131,072), the warm-started high-gamma patch embed
+(13,312), LayerNorms (8,192) and the head (2,565) — so it must be loaded
+together with the backbone above.
 
 ```python
 from load_corteg import load_corteg, predict
@@ -294,7 +295,7 @@ copies:
 | PopT | `POPT_REPO` | [github.com/czlwang/PopulationTransformer](https://github.com/czlwang/PopulationTransformer) |
 | | `POPT_WEIGHTS` | `pretrained_popt_brainbert_stft.pth`, from [huggingface.co/PopulationTransformer/popt_brainbert_stft](https://huggingface.co/PopulationTransformer/popt_brainbert_stft) |
 | Brant | `BRANT_SRC` | `Brant_src/` from [huggingface.co/Daoze/Brant](https://huggingface.co/Daoze/Brant) |
-| | `BRANT_WEIGHTS` | the checkpoint linked from that model card |
+| | `BRANT_WEIGHTS` | the **directory** holding `time_encoder.pt` and `channel_encoder.pt` — the released weights are two files, not one state_dict |
 
 `POPT_REPO` is needed even for BrainBERT and Brant, because the shared electrode
 selection lives there.

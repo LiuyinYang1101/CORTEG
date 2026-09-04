@@ -288,6 +288,14 @@ def main():
         _cached_state = {k: v.cpu() for k, v in tmp.state_dict().items()}
         del tmp
         print(f"  Cached pretrained state_dict ({len(_cached_state)} tensors)")
+    elif not args.no_pretrained:
+        raise SystemExit(
+            f"MantisV2 weights not found at {args.pretrained_path!r}.\n"
+            "  Without them the backbone is randomly initialised, but the run would\n"
+            "  still be labelled 'mantis_pretrained' -- a random-init number reported\n"
+            "  as a pretrained one.\n"
+            "  Fix:  --pretrained_path /path/to/mantis_v2   (source: README.md)\n"
+            "  Or, to request random init deliberately:  --no_pretrained")
 
     def build_model():
         model = MantisDualRegressor(

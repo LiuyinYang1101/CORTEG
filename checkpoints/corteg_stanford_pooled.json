@@ -12,7 +12,7 @@
     "value_full": 0.5535,
     "verified": "Reproduced from this checkpoint on all 9 Stanford subjects: cohort mean 0.5537 (published 0.5535), max per-subject deviation 0.0016."
   },
-  "contents": "trainable parameters only \u2014 LoRA A/B on blocks 4-7, KNNSoftFourier spatial adapter, LayerNorm, and the readout head. The frozen ST-EEGFormer Small backbone is NOT included; see CHECKPOINTS.md.",
+  "contents": "trainable parameters only: KNNSoftFourier spatial adapter (142,095), LoRA A/B on blocks 4-7 (131,072), the warm-started high-gamma patch embed (13,312), LayerNorms (8,192) and the readout head (2,565). The frozen ST-EEGFormer Small backbone is NOT included; see README.md.",
   "architecture_args": {
     "steegformer_variant": "small",
     "merge_strategy": "average",
@@ -32,8 +32,6 @@
   "note": "build_args is the exact argparse namespace the released run used, with local paths cleared. load_corteg() rebuilds from it so the architecture cannot drift from the weights.",
   "build_args": {
     "dataset": "Stanford",
-    "step_ms": 0,
-    "eval_step_ms": 50,
     "data_root": "",
     "val_ratio": 0.1,
     "train_mode": "pooled",

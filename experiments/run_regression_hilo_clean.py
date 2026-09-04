@@ -191,6 +191,14 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
             trust_checkpoint=True,
         )
 
+    # Warm-start the hi patch embed by interpolating the pretrained lo weights.
+    # The pretrained scalp-EEG checkpoint has no patch_embed_hi, so without this it
+    # trains from random init -- silently, because the load reports it as a merely
+    # missing key and unfreeze_hi_components_if_present then makes it trainable.
+    # Skipped for hi_only, where the lo embed has a different size to copy from.
+    if getattr(args, "stream", "both") != "hi_only":
+        _init_hi_embed_from_lo(backbone)
+
     # Attach channel adapter (must be after pretrained load)
     adapter_type = getattr(args, "channel_adapter", "none")
     if adapter_type != "none":
@@ -363,10 +371,6 @@ def main():
     # Data
     p.add_argument("--dataset", type=str, default="Stanford",
                     choices=["Stanford"])
-    p.add_argument("--step_ms", type=int, default=0,
-                    help="Training window step in ms (0 = dataset default)")
-    p.add_argument("--eval_step_ms", type=int, default=50,
-                    help="Evaluation window step in ms")
     p.add_argument("--data_root", type=str, default="")
     p.add_argument("--val_ratio", type=float, default=0.1)
     p.add_argument("--train_mode", type=str, default="per_subject",
@@ -908,7 +912,11 @@ def main():
                 "mse": float(rec["mse"]),
             }
             os.makedirs(args.save_root, exist_ok=True)
-            results_path = os.path.join(args.save_root, "results_persub.json")
+            # Named per subject: this write happens inside the per-subject loop, so
+            # a shared filename keeps only the last subject when several are
+            # fine-tuned into one save_root.
+            results_path = os.path.join(
+                args.save_root, f"results_persub_{sub_name}.json")
             with open(results_path, "w") as f:
                 json.dump(results, f, indent=2)
             print(f"\nResults saved: {results_path}", flush=True)

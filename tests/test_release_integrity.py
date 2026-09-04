@@ -332,6 +332,41 @@ class TestReleasedCheckpoint(unittest.TestCase):
         y = predict(model, rs.randn(3, C, T_LO), rs.randn(3, C, T_HI))
         self.assertEqual(y.shape, (3, 5))
 
+    def test_hi_patch_embed_is_warm_started(self):
+        """The hi patch embed must be interpolated from the pretrained lo weights.
+
+        The scalp-EEG checkpoint has no patch_embed_hi, so the load reports it as
+        a merely missing key and training proceeds from random init without any
+        error. A strip-down once deleted this call while keeping the function,
+        and inference-only checks could not see it -- hence this test.
+        """
+        import types
+        import numpy as np
+        import torch
+        import paths as paths_mod
+        cfg = REPO / "configs" / "steegformer_small.json"
+        rel = json.loads(cfg.read_text(encoding="utf-8"))["pretrained"]["path"]
+        if not os.path.exists(paths_mod.resolve_pretrained_path(rel)):
+            self.skipTest("ST-EEGFormer backbone not present; see README.md")
+        from experiments.run_regression_hilo_clean import build_model
+
+        base = json.loads((REPO / "checkpoints" / "corteg_stanford_pooled.json")
+                          .read_text(encoding="utf-8"))["build_args"]
+        a = dict(base)
+        a.update(model_kwargs_json=str(cfg), no_pretrained=False)
+        xyz = np.random.RandomState(0).randn(46, 3).astype(np.float32) * 30.0
+        m = build_model(types.SimpleNamespace(**a), C_in=46, T_in=128,
+                        ecog_xyz_m=xyz, d_out=5)
+
+        hi = m.backbone.patch_embed_hi.proj.weight.detach()
+        lo = m.backbone.patch_embed.proj.weight.detach()
+        want = torch.nn.functional.interpolate(
+            lo.reshape(lo.shape[0], 1, -1), size=hi.shape[-1],
+            mode="linear", align_corners=False).reshape(hi.shape)
+        self.assertLess(float((hi - want).abs().max()), 1e-5,
+                        "patch_embed_hi is not the interpolated lo embed — the "
+                        "warm start is not being applied")
+
     def test_build_args_only_name_supported_flags(self):
         """Every arg recorded in the manifest must still exist on the runner.
 

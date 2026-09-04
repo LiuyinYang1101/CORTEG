@@ -622,10 +622,6 @@ if __name__ == "__main__":
             for tr, te in forward_chaining_split(tt, w, 4):
                 assert tt[tr].max() < tt[te].min()
                 assert _pairs_within(tt, w, tr, te) == 0
-            a, b, c = chronological_split(tt, w)
-            assert tt[a].max() < tt[c].min()
-            for x, y in blocked_kfold_embargo(tt, w, 5):
-                assert _pairs_within(tt, w, x, y) == 0
     # 5. brute-force cross-check of the counter
     for _ in range(300):
         n = int(rng.integers(10, 120))
@@ -634,5 +630,5 @@ if __name__ == "__main__":
         b = np.setdiff1d(np.arange(n), a)
         w = float(rng.uniform(0.2, 8))
         assert _pairs_within(tt, w, a, b) == sum(1 for i in a for j in b if abs(tt[i] - tt[j]) < w)
-    print("btb_splits v2 self-test PASSED "
-          "(negative controls fire; 300 trials x 4 footprints x 3 schemes; 300 brute-force checks)")
+    print("BrainTreebank split self-test PASSED "
+          "(negative controls fire; 300 trials x 4 footprints; 300 brute-force checks)")

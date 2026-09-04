@@ -199,6 +199,13 @@ def _car(x: np.ndarray) -> np.ndarray:
     return x - x.mean(axis=0, keepdims=True)
 
 
+def _resample_factors(fs_in: int, fs_out: int):
+    """Integer (up, down) such that fs_in * up / down == fs_out."""
+    from math import gcd
+    g = gcd(int(fs_in), int(fs_out))
+    return int(fs_out) // g, int(fs_in) // g
+
+
 def _resample_to_pretrain(x: np.ndarray, fs: float) -> np.ndarray:
     """Resample (..., T) from fs -> PRETRAIN_FS using scipy.signal.resample (Fourier)."""
     if int(round(fs)) == PRETRAIN_FS:
@@ -354,23 +361,6 @@ def load_brainbert(weights_path: str = "", device: str = "cuda"):
     for p in model.parameters():                     # frozen extractor
         p.requires_grad_(False)
     return model
-
-
-def _build_random_model(device: str = "cpu"):
-    """Build an *un-trained* large model (for --self_test without weights/omegaconf)."""
-    cfg = SimpleNamespace(
-        name="masked_tf_model", hidden_dim=HIDDEN_DIM, layer_dim_feedforward=3072,
-        layer_activation="gelu", nhead=12, encoder_num_layers=6, input_dim=INPUT_DIM,
-    )
-    with _import_scope(_BB_COLLIDE, brainbert_repo()):
-        import models  # noqa: E402
-        model = models.build_model(cfg)
-    model.eval().to(device)
-    return model
-
-
-# ----------------------------------------------------------------------------
-# Public API
 
 
 def brainbert_embeddings(

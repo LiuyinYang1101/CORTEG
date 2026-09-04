@@ -146,8 +146,13 @@ def extract_subject(subj: str, args):
     """
     root = btb_root()
     trial = args.trial or trial_of(root, subj)
+    # seed and max_per_class select WHICH events are drawn, so they belong in the
+    # cache key. Without them, a --seed 1 run reuses the seed-42 event set while
+    # the results JSON records seed 1 -- and the paper's 3-seed average collapses
+    # to one event selection scored three times.
     tag = (f"btb_{subj}_{trial}_win{args.win_sec}_pre{args.pre_sec}"
-           f"_hfa{int(args.hga_low)}-{int(args.hga_high)}.npz")
+           f"_hfa{int(args.hga_low)}-{int(args.hga_high)}"
+           f"_n{args.max_per_class}_s{args.seed}.npz")
     cache = os.path.join(btb_output_root(), "cache", tag)
     if os.path.exists(cache) and not args.no_cache:
         d = np.load(cache, allow_pickle=True)
@@ -203,7 +208,10 @@ def build_corteg(C: int, T_lo: int, xyz_m: np.ndarray, args):
         layerwise_gate_bottleneck=args.layerwise_gate_bottleneck,
         layerwise_gate_act=args.layerwise_gate_act,
         layerwise_gate_share_blocks=False,
-        channel_adapter=CHANNEL_ADAPTER, knn_k=KNN_K, knn_sigma=0.0,
+        # knn_sigma=None means the median nearest-neighbour distance. Passing
+        # 0.0 divides by zero inside the Gaussian kernel, zeroing every weight
+        # and erasing the KNN prior the adapter is supposed to start from.
+        channel_adapter=CHANNEL_ADAPTER, knn_k=KNN_K, knn_sigma=None,
         adapter_branch="both", xyz_mode="real",
         use_ecog_fuser=False, M_EEG=145, fuser_hidden=128,
         head_dropout=args.head_dropout, head_hidden=0,

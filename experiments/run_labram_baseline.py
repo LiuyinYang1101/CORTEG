@@ -138,10 +138,23 @@ def build_labram(args, d_out: int = 5) -> nn.Module:
             del sd_clean[k]
         sd_clean.pop("mask_token", None)
 
+        if not sd_clean:
+            raise SystemExit(
+                f"{pretrained_path} yielded no usable tensors. This loader keeps only\n"
+                "  keys prefixed 'student.'; a checkpoint saved without that prefix\n"
+                "  loads nothing while still reporting success.")
         msg = backbone.load_state_dict(sd_clean, strict=False)
         print(f"  Loaded: missing={len(msg.missing_keys)}, unexpected={len(msg.unexpected_keys)}")
+    elif skip_pretrained:
+        print("  LaBraM: random init (--no_pretrained)")
     else:
-        print(f"  LaBraM: random init")
+        raise SystemExit(
+            f"LaBraM weights not found at {pretrained_path!r}.\n"
+            "  Without them the backbone is randomly initialised, but the run would\n"
+            "  still be labelled 'labram_pretrained' -- a random-init number reported\n"
+            "  as a pretrained one.\n"
+            "  Fix:  --pretrained_path /path/to/labram-base.pth   (source: README.md)\n"
+            "  Or, to request random init deliberately:  --no_pretrained")
 
     # Channel embedding controls (same as STEEGFormer)
     ch_mode = getattr(args, "channel_embed_mode", "pretrained_learnable")

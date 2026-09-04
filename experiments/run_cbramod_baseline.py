@@ -118,8 +118,16 @@ def build_cbramod(args, d_out: int = 5) -> nn.Module:
         print(f"  Loaded: missing={len(msg.missing_keys)}, unexpected={len(msg.unexpected_keys)}")
         if msg.missing_keys:
             print(f"  Missing: {msg.missing_keys[:5]}")
+    elif getattr(args, "no_pretrained", False):
+        print("  CBraMod: random init (--no_pretrained)")
     else:
-        print(f"  CBraMod: random init")
+        raise SystemExit(
+            f"CBraMod weights not found at {pretrained_path!r}.\n"
+            "  Without them the backbone is randomly initialised, but the run would\n"
+            "  still be labelled 'cbramod_pretrained' -- a random-init number reported\n"
+            "  as a pretrained one.\n"
+            "  Fix:  --pretrained_path /path/to/pretrained_weights.pth  (see README.md)\n"
+            "  Or, to request random init deliberately:  --no_pretrained")
 
     # Fine-tuning: freeze all, then selectively unfreeze
     lora_last_n = int(args.unfreeze_last_n)

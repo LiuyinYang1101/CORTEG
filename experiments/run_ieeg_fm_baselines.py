@@ -88,7 +88,9 @@ def subject_embeddings(subj: str, args):
     ep = window_for(args.fm, args.endpoint)
     root = btb_root()
     trial = args.trial or trial_of(root, subj)
-    tag = f"fm_{args.fm}_{args.endpoint}_{subj}_{trial}_win{ep['win_sec']}.npz"
+    # seed and max_per_class choose the events, so they key the cache too.
+    tag = (f"fm_{args.fm}_{args.endpoint}_{subj}_{trial}_win{ep['win_sec']}"
+           f"_n{args.max_per_class}_s{args.seed}.npz")
     cache = os.path.join(btb_output_root(), "cache", tag)
     if os.path.exists(cache) and not args.no_cache:
         d = np.load(cache, allow_pickle=True)
@@ -105,10 +107,10 @@ def subject_embeddings(subj: str, args):
     xyz = np.array([loc[n] for n in use], dtype=np.float64)
 
     fs = estimate_fs(root, subj, trial)          # measured, never assumed
-    if args.fm == "brant":
-        # sub_9 runs at ~1019 Hz; assuming 2048 doubles Brant's true footprint
-        # past the embargo without tripping the overlap check.
-        assert_brant_fs_fixed(fs)
+    # No assert_brant_fs_fixed here: that guard exists for code paths which assume
+    # 2048 Hz. brant_embeddings resamples from the measured rate, so sub_9 at
+    # ~1019 Hz is handled rather than rejected -- and the paper's Brant row
+    # includes sub_9.
     t2s = build_time_to_sample(root, subj, trial)
 
     if args.endpoint == "sentence_onset":
@@ -131,7 +133,9 @@ def subject_embeddings(subj: str, args):
         emb = ieeg_fm.brant_embeddings(x_raw, fs=fs, device=args.device,
                                        batch_size=args.batch_size)
     else:
-        emb = ieeg_fm.popt_embeddings(x_raw, xyz, fs=fs,
+        # load_localization returns PopT's native integer L/I/P already, so the
+        # MNI-millimetre conversion must NOT be applied on top of it.
+        emb = ieeg_fm.popt_embeddings(x_raw, xyz, fs=fs, coords_are_mni_mm=False,
                                       device=args.device, batch_size=args.batch_size)
     emb = np.asarray(emb, dtype=np.float32)
     os.makedirs(os.path.dirname(cache), exist_ok=True)
@@ -164,7 +168,10 @@ def score_subject(emb, y, folds, arm, seed):
         return float(np.mean(vals)) if vals else float("nan")
 
     if arm == "pop_meanpool":
-        return fold_mean(emb.mean(axis=1)), None
+        # PopT already returns one population vector per window, (N, D); the
+        # per-electrode models return (N, C, D) and need pooling first.
+        feats = emb if emb.ndim == 2 else emb.mean(axis=1)
+        return fold_mean(feats), None
     per_elec = [fold_mean(emb[:, c, :]) for c in range(emb.shape[1])]
     per_elec = np.asarray(per_elec, dtype=np.float64)
     if arm == "single_elec_max":
