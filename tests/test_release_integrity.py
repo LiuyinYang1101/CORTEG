@@ -20,9 +20,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 RUNNER = REPO / "experiments" / "run_regression_hilo_clean.py"
 BTB_RUNNER = REPO / "experiments" / "run_btb_classification.py"
+FM_RUNNER = REPO / "experiments" / "run_ieeg_fm_baselines.py"
 ALL_SCRIPTS = sorted((REPO / "scripts").glob("*.sh"))
 RUNNER_CALL = "python -m experiments.run_regression_hilo_clean"
 BTB_RUNNER_CALL = "python -m experiments.run_btb_classification"
+FM_RUNNER_CALL = "python -m experiments.run_ieeg_fm_baselines"
 
 # Each script is validated against the runner it actually calls; checking a
 # BrainTreebank script against the Stanford parser reports every BTB flag as
@@ -31,6 +33,8 @@ SCRIPTS = [s for s in ALL_SCRIPTS
            if RUNNER_CALL in s.read_text(encoding="utf-8")]
 BTB_SCRIPTS = [s for s in ALL_SCRIPTS
                if BTB_RUNNER_CALL in s.read_text(encoding="utf-8")]
+FM_SCRIPTS = [s for s in ALL_SCRIPTS
+              if FM_RUNNER_CALL in s.read_text(encoding="utf-8")]
 
 sys.path.insert(0, str(REPO))
 
@@ -91,7 +95,12 @@ def script_flags(text: str):
                 continue
             nxt = toks[i + 1] if i + 1 < len(toks) else None
             # A value must be on the same logical line and not itself a flag.
-            yield tok, (None if (nxt is None or nxt.startswith("--")) else nxt)
+            val = None if (nxt is None or nxt.startswith("--")) else nxt
+            # A shell variable cannot be checked against `choices` statically;
+            # report it as valueless rather than as an illegal literal.
+            if val is not None and "$" in val:
+                val = None
+            yield tok, val
 
 
 def _arrays(text: str):
@@ -455,6 +464,78 @@ class TestBrainTreebank(unittest.TestCase):
         import data.braintreebank as btb
         self.assertTrue(hasattr(btb, "load_localization"))      # voxel L/I/P
         self.assertTrue(hasattr(btb, "load_localization_mni"))  # shared MNI mm
+
+
+class TestIeegFm(unittest.TestCase):
+    """The intracranial-FM comparison arms."""
+
+    def test_fm_script_flags_are_known_and_valid(self):
+        spec = parser_spec(FM_RUNNER)
+        self.assertTrue(FM_SCRIPTS, "no intracranial-FM script found")
+        problems = []
+        for sh in FM_SCRIPTS:
+            for flag, val in script_flags(sh.read_text(encoding="utf-8")):
+                if flag not in spec:
+                    problems.append(f"{sh.name}: unknown flag {flag}")
+                    continue
+                info = spec[flag]
+                if info["store_true"] and val is not None:
+                    problems.append(f"{sh.name}: {flag} is store_true, got {val!r}")
+                elif info["choices"] and val is not None and val not in info["choices"]:
+                    problems.append(
+                        f"{sh.name}: {flag}={val!r} not in {sorted(info['choices'])}")
+        self.assertEqual(problems, [], "\n" + "\n".join(problems))
+
+    def test_no_third_party_weights_or_code_are_vendored(self):
+        """BrainBERT ships no LICENSE, so nothing of it may live in this repo."""
+        for pat in ("**/*.pth", "**/stft_large*", "**/pre_model.py",
+                    "**/clean_laplacian.json"):
+            found = [f for f in REPO.glob(pat) if ".git" not in str(f)]
+            self.assertEqual(found, [], f"third-party artefact vendored: {found}")
+
+    def test_every_fm_is_reached_through_an_env_var(self):
+        """No accessor may fall back to a path on the author's machine."""
+        import ieeg_fm
+        for getter in ("brainbert_repo", "brainbert_weights", "popt_repo",
+                       "brant_src", "brant_weights"):
+            for var in ("BRAINBERT_REPO", "BRAINBERT_WEIGHTS", "POPT_REPO",
+                        "BRANT_SRC", "BRANT_WEIGHTS"):
+                os.environ.pop(var, None)
+            with self.assertRaises(SystemExit, msg=f"{getter} did not guard"):
+                getattr(ieeg_fm, getter)()
+
+    def test_task_b_window_is_wider_in_the_fm_runner(self):
+        """Task B must use the 5 s footprint, or its folds under-embargo."""
+        from experiments.run_ieeg_fm_baselines import ENDPOINTS
+        self.assertEqual(ENDPOINTS["sentence_onset"]["win_sec"], 1.5)
+        self.assertEqual(ENDPOINTS["word_nonword"]["win_sec"], 5.0)
+
+    def test_oracle_arm_ships_its_caveat(self):
+        """single_elec_max is an oracle; every place that says so must keep saying it.
+
+        Checked per-location rather than "is 0.53 anywhere in the file": the
+        string appears in both the module docstring and the emitted caveat, so a
+        file-wide search stays true when one of them is corrupted.
+        """
+        src = FM_RUNNER.read_text(encoding="utf-8")
+        head = src[:src.index('"""', 3)]                    # module docstring only
+        self.assertIn("0.53", head, "the docstring must state the inflated null")
+
+        caveat = src[src.index('out["caveat"]'):]
+        caveat = caveat[:caveat.index(")\n")]
+        self.assertIn("0.53", caveat, "the emitted caveat must state the null")
+        self.assertIn("single_elec_mean", caveat,
+                      "the caveat must point at the non-oracle comparison")
+
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        self.assertIn("oracle", readme.lower())
+        self.assertIn("0.53", readme, "README must state the inflated null")
+
+    def test_adapters_have_a_caller(self):
+        """ieeg_fm.py must not be dead code."""
+        callers = [f for f in REPO.glob("experiments/*.py")
+                   if "ieeg_fm" in f.read_text(encoding="utf-8")]
+        self.assertTrue(callers, "ieeg_fm.py has no caller")
 
 
 class TestConfigs(unittest.TestCase):

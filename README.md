@@ -85,6 +85,7 @@ load_corteg.py        load the released adapter and run it
 paths.py              environment-variable path resolution
 models/steegformer/   ST-EEGFormer backbone, KNNSoftFourier adapter, LoRA
 models/               LaBraM / CBraMod foundation-model baselines
+ieeg_fm.py            BrainBERT / PopT / Brant adapters
 data/                 Stanford + BrainTreebank loaders, splits, scalers, collate
 train/                training engine, early stopping, LR schedule
 experiments/          CORTEG runner + baseline runners
@@ -100,9 +101,9 @@ docs/                 live interactive demo (Three.js + Plotly, no backend)
 | Table 1, CORTEG pooled (Stanford) | `scripts/table1_corteg_pooled_stanford.sh` |
 | Table 1, CORTEG LOO-FT | `scripts/table1_corteg_loo_ft.sh <subject>` |
 | Table 3, BrainTreebank | `scripts/table3_corteg_braintreebank.sh` |
+| Intracranial-FM comparison | `scripts/table4_ieeg_fm_baselines.sh` |
 
-Not covered by this release: the intracranial-FM comparison (BrainBERT / PopT /
-Brant) and the REVE backbone port. Tracked for a follow-up.
+Not covered by this release: the REVE backbone port.
 
 ## Install
 
@@ -271,6 +272,46 @@ training split rather than the exact 90 % subset).
 
 Each runner takes `--pretrained_path` if you keep them elsewhere. These weights
 are not re-hosted here; each carries its own license.
+
+## Intracranial foundation models
+
+CORTEG is compared against BrainBERT, the Population Transformer and Brant on
+BrainTreebank. `ieeg_fm.py` wraps all three; `scripts/table4_ieeg_fm_baselines.sh`
+runs them under the same events, folds and 7 s embargo as CORTEG, so only the
+encoder differs. Each is fed its own native input — BrainBERT and PopT take
+2048 Hz spectrograms, Brant 250 Hz patches — because a foundation-model
+comparison means nothing otherwise.
+
+Neither the code nor the weights are redistributed here. Point these at your own
+copies:
+
+| Model | Variable | Source |
+| --- | --- | --- |
+| BrainBERT | `BRAINBERT_REPO` | [github.com/czlwang/BrainBERT](https://github.com/czlwang/BrainBERT) |
+| | `BRAINBERT_WEIGHTS` | `stft_large_pretrained.pth`, from the Google Drive link in that repo's README |
+| PopT | `POPT_REPO` | [github.com/czlwang/PopulationTransformer](https://github.com/czlwang/PopulationTransformer) |
+| | `POPT_WEIGHTS` | `pretrained_popt_brainbert_stft.pth`, from [huggingface.co/PopulationTransformer/popt_brainbert_stft](https://huggingface.co/PopulationTransformer/popt_brainbert_stft) |
+| Brant | `BRANT_SRC` | `Brant_src/` from [huggingface.co/Daoze/Brant](https://huggingface.co/Daoze/Brant) |
+| | `BRANT_WEIGHTS` | the checkpoint linked from that model card |
+
+`POPT_REPO` is needed even for BrainBERT and Brant, because the shared electrode
+selection lives there.
+
+**Two caveats that belong next to these numbers.**
+
+The headline BrainBERT and Brant rows use the `single_elec_max` arm: an
+independent probe per electrode, then the maximum over electrodes. The winning
+electrode is chosen on the same folds that score it, so the arm is an oracle —
+its null sits at roughly 0.53 rather than 0.50, and the inflation grows with
+electrode count. The script therefore runs `single_elec_mean` alongside it; the
+max is not interpretable without the non-oracle number beside it.
+
+`sub_5`, `sub_8` and `sub_9` appear in BrainBERT's and PopT's pretraining
+corpora. If that biases anything, it favours those models, not CORTEG.
+
+One thing this release does not cover: the paper's PopT row comes from a LoRA
+fine-tune, whereas the runner here scores PopT as a frozen population probe.
+The frozen arms are the published configuration for BrainBERT and Brant only.
 
 ## Reproducing the paper
 
