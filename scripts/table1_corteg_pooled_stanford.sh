@@ -5,18 +5,19 @@
 # Hyperparameters: §4 of the paper.
 set -euo pipefail
 
-OUT="${CORTEG_OUTPUT_ROOT:-$HOME/workspace/outputs/ECoG_EEGFM}/table1/stanford_corteg_pooled"
+OUT="${CORTEG_OUTPUT_ROOT:-$HOME/workspace/outputs/corteg}/table1/stanford_corteg_pooled"
 mkdir -p "$OUT"
 
 python -m experiments.run_regression_hilo_clean \
     --dataset Stanford \
     --train_mode pooled \
     --steegformer_variant small \
+    --model_kwargs_json configs/steegformer_small.json \
     --epochs 100 \
     --early_stop_patience 90 \
     --batch_size 64 \
     --lr 3e-3 \
-    --weight_decay 0.01 \
+    --weight_decay 0.005 \
     --sched cosine \
     --warmup_epochs 10 \
     --min_lr 1e-5 \

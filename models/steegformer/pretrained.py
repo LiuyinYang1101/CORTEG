@@ -15,6 +15,14 @@ def parse_model_kwargs(model_kwargs_json: str) -> Dict[str, Any]:
     if os.path.exists(model_kwargs_json):
         with open(model_kwargs_json, "r") as f:
             return json.load(f)
+    # A path-looking argument that does not exist is a user error, not inline
+    # JSON. Say so, rather than failing later inside json.loads().
+    if model_kwargs_json.strip().endswith(".json"):
+        raise FileNotFoundError(
+            "model_kwargs_json looks like a file path but does not exist: "
+            f"{model_kwargs_json!r} (cwd={os.getcwd()}). "
+            "Run the scripts from the repository root, or pass an absolute path."
+        )
     return json.loads(model_kwargs_json)
 
 

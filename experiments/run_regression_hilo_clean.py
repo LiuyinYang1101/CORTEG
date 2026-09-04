@@ -188,19 +188,38 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
         **backbone_kwargs,
     )
 
-    # Load MAE pretrained weights
+    # Load MAE pretrained weights.
+    #
+    # A missing `pretrained` block used to fall through here silently, training
+    # a randomly-initialised backbone under the CORTEG name -- which is the
+    # random-init ablation, not the method. Refuse instead: pass
+    #   --model_kwargs_json configs/steegformer_<variant>.json
+    # to load the backbone, or --no_pretrained to ask for random init on purpose.
     skip_pretrained = getattr(args, "no_pretrained", False)
-    if not skip_pretrained and pretrained is not None:
-        ckpt_path = str(pretrained.get("path", "")).strip()
-        if ckpt_path:
-            ckpt_path = resolve_pretrained_path(ckpt_path)
-            load_pretrained_with_report(
-                backbone, ckpt_path,
-                ckpt_key=pretrained.get("ckpt_key", "model"),
-                strict=pretrained.get("strict", False),
-                strip_prefix=pretrained.get("strip_prefix", ""),
-                trust_checkpoint=True,
+    ckpt_path = str((pretrained or {}).get("path", "")).strip()
+    if skip_pretrained:
+        print("  [pretrained] --no_pretrained: backbone left at random init", flush=True)
+    else:
+        if not ckpt_path:
+            raise SystemExit(
+                "No pretrained backbone configured.\n"
+                "  CORTEG loads ST-EEGFormer weights via --model_kwargs_json; without it the\n"
+                "  backbone stays randomly initialised, which is the Table 2 'random init'\n"
+                "  ablation rather than CORTEG.\n"
+                "  Fix:  --model_kwargs_json configs/steegformer_%s.json\n"
+                "  This is required even with --finetune_from: the released CORTEG\n"
+                "  adapter holds only the trainable parameters, not the frozen backbone.\n"
+                "  Or, to request random init deliberately:  --no_pretrained"
+                % str(getattr(args, "steegformer_variant", "small")).lower()
             )
+        ckpt_path = resolve_pretrained_path(ckpt_path)
+        load_pretrained_with_report(
+            backbone, ckpt_path,
+            ckpt_key=pretrained.get("ckpt_key", "model"),
+            strict=pretrained.get("strict", False),
+            strip_prefix=pretrained.get("strip_prefix", ""),
+            trust_checkpoint=True,
+        )
 
     # Channel embedding controls
     ch_mode = getattr(args, "channel_embed_mode", "pretrained_learnable")

@@ -29,7 +29,7 @@ subject. The full Table 2 ablation sweep is ≈70 GPU-hours.
 | CORTEG pooled | `bash scripts/table1_corteg_pooled_stanford.sh` |
 | CORTEG LOO-FT | `for s in bp cc ht jc jp mv wc wm zt; do bash scripts/table1_corteg_loo_ft.sh $s; done` |
 | CORTEG per-subject | `bash scripts/table1_corteg_pooled_stanford.sh --train_mode per_subject` |
-| Classical baselines | `bash scripts/table1_classical_baselines.sh` |
+| Classical baselines | *Not in this release.* `experiments/run_ecog_baselines.py` implements PLS, HOPLS, LSTM and HiLoFuseNet, but is Ghent-only (no `--dataset` argument, Ghent loader hardcoded); Ridge is not implemented at all. |
 | DeepFingerNet | Transcribed from its original paper (Table II). |
 
 ## Table 2 — Ablation study

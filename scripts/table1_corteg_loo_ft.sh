@@ -23,11 +23,12 @@ python -m experiments.run_regression_hilo_clean \
     --train_mode pooled \
     --exclude_subjects "$HELDOUT" \
     --steegformer_variant small \
+    --model_kwargs_json configs/steegformer_small.json \
     --epochs 100 \
     --early_stop_patience 90 \
     --batch_size 64 \
     --lr 3e-3 \
-    --weight_decay 0.01 \
+    --weight_decay 0.005 \
     --sched cosine --warmup_epochs 10 --min_lr 1e-5 --use_amp \
     --lora_last_n 4 --lora_r 4 --lora_alpha 16 --lora_dropout 0.2 \
     --lora_targets "qkv,proj,fc1,fc2" \
@@ -42,7 +43,9 @@ python -m experiments.run_regression_hilo_clean \
 # --- Stage 2: per-subject calibration on the held-out subject (f = 1.0) ---
 python -m experiments.run_regression_hilo_clean \
     --dataset Stanford \
-    --train_mode per_subject \
+    --train_mode finetune \
+    --steegformer_variant small \
+    --model_kwargs_json configs/steegformer_small.json \
     --finetune_subjects "$HELDOUT" \
     --finetune_from "$OUT/stage1/checkpoint.pth" \
     --finetune_modules "head,lora,adapter" \
@@ -51,7 +54,7 @@ python -m experiments.run_regression_hilo_clean \
     --epochs 30 \
     --early_stop_patience 30 \
     --batch_size 64 \
-    --weight_decay 0.01 \
+    --weight_decay 0.005 \
     --sched cosine --warmup_epochs 2 --min_lr 1e-5 --use_amp \
     --lora_last_n 4 --lora_r 4 --lora_alpha 16 \
     --lora_targets "qkv,proj,fc1,fc2" \

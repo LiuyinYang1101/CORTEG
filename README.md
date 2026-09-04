@@ -71,10 +71,15 @@ Full table, ablations, and per-subject paired tests: see the paper.
 
 ## Repository scope
 
-This release reproduces all paper results on the **public Stanford
-fingerflex dataset**. The Ghent speech-envelope dataset is private and is
-**not** redistributed; its predictions are included in the live demo for
-visualization only.
+This release reproduces the **CORTEG** rows of Table 1 and Table 2 on the
+**public Stanford fingerflex dataset**. The Ghent speech-envelope dataset is
+private and is **not** redistributed; its predictions are included in the live
+demo for visualization only.
+
+Not yet covered by this release: the classical Table-1 baselines (Ridge / PLS /
+HOPLS / LSTM), the intracranial-FM comparison (BrainBERT / PopT / Brant), the
+BrainTreebank benchmark, layer-wise gated fusion, and the REVE backbone port.
+These are tracked for a follow-up release.
 
 ```
 models/steegformer/   ST-EEGFormer backbone, KNNSoftFourier spatial adapter, LoRA
@@ -91,7 +96,7 @@ docs/                 Live interactive demo (Three.js + Plotly, no backend)
 | --- | --- |
 | Table 1, CORTEG pooled (Stanford) | `scripts/table1_corteg_pooled_stanford.sh` |
 | Table 1, CORTEG LOO-FT | `scripts/table1_corteg_loo_ft.sh <subject>` |
-| Table 1, classical baselines | `scripts/table1_classical_baselines.sh` |
+| Table 1, classical baselines | *not in this release* — see [`REPRODUCE.md`](REPRODUCE.md) |
 | Table 2, ablations | `scripts/table2_ablations.sh` |
 | Fig 2(b,d), scaling + low-data | `scripts/fig2_scaling_and_lowdata.sh` |
 

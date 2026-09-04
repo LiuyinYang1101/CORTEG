@@ -16,25 +16,34 @@ _LOCAL_PRETRAINED_ROOT = os.path.expanduser("~/workspace/datasets/pretrained_eeg
 _LOCAL_OUTPUT_ROOT = os.path.expanduser("~/workspace/outputs/ECoG_EEGFM")
 
 
+def _env(*names: str, default: str = "") -> str:
+    """First environment variable that is set, else `default`."""
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return default
+
+
 def get_data_root(override: str = "") -> str:
     """Resolve the Stanford ECoG dataset root directory."""
     if override:
         return override
-    return os.environ.get("ECOG_DATA_ROOT", _LOCAL_DATA_ROOT)
+    return _env("CORTEG_DATA_ROOT", "ECOG_DATA_ROOT", default=_LOCAL_DATA_ROOT)
 
 
 def get_pretrained_root(override: str = "") -> str:
     """Resolve the root directory for pretrained EEG-MAE checkpoints."""
     if override:
         return override
-    return os.environ.get("ECOG_PRETRAINED_ROOT", _LOCAL_PRETRAINED_ROOT)
+    return _env("CORTEG_PRETRAINED_ROOT", "ECOG_PRETRAINED_ROOT", default=_LOCAL_PRETRAINED_ROOT)
 
 
 def get_output_root(override: str = "") -> str:
     """Resolve the root directory for experiment outputs."""
     if override:
         return override
-    return os.environ.get("ECOG_OUTPUT_ROOT", _LOCAL_OUTPUT_ROOT)
+    return _env("CORTEG_OUTPUT_ROOT", "ECOG_OUTPUT_ROOT", default=_LOCAL_OUTPUT_ROOT)
 
 
 def resolve_pretrained_path(path: str) -> str:
