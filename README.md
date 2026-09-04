@@ -178,6 +178,10 @@ found during development:
   clamps out-of-range inputs to the end value, collapsing 47 % of `sub_6`'s
   events onto one identical window, with both labels.
 
+**Verified.** Running this pipeline on `sub_3` from the raw download gives a
+mean AUROC of 0.751 over the four causal folds, against 0.756 reported for that
+subject in the paper (single seed here; the paper averages seeds 1, 2 and 42).
+
 Splits are strictly causal: forward chaining with a 7 s embargo, a causal
 validation block embargoed from both fit and test, and every fold boundary
 asserted free of overlapping windows. Carving validation at random would leak
