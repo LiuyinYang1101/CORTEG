@@ -723,6 +723,53 @@ class LearnedRouter(nn.Module):
         return merged, gate
 
 
+class LayerwiseHiLoGate(nn.Module):
+    """Per-layer gated residual fusion of hi tokens into the lo stream.
+
+    g = act(MLP(LN[ mean_N(lo0), mean_N(hi0) ]))   # [B, depth], one scalar/block
+    at block l:   tok <- block_l(tok);   tok[:, patches] += g_l * hi
+
+    Zero-init last linear: with gate_act="tanh", g==0 at start so the model
+    begins exactly as the lo-only baseline then learns where to open hi
+    (Flamingo-style); tanh also lets it suppress hi (negative g). GMU-style
+    input-dependent gate, generalised from LearnedRouter to one scalar/layer.
+    Params (D=512, bottleneck=16, depth=12): ~16.6K, no extra block params.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        depth: int,
+        bottleneck: int = 16,
+        gate_act: str = "tanh",
+    ):
+        super().__init__()
+        if gate_act not in ("tanh", "sigmoid", "none"):
+            raise ValueError(f"gate_act must be tanh|sigmoid|none, got {gate_act!r}")
+        self.gate_act = gate_act
+        self.net = nn.Sequential(
+            nn.LayerNorm(2 * embed_dim),
+            nn.Linear(2 * embed_dim, bottleneck),
+            nn.GELU(),
+            nn.Linear(bottleneck, int(depth)),
+        )
+        # Zero-init last linear -> raw == 0 at start.
+        #   tanh(0) = 0     -> exactly the lo-only baseline (Flamingo-style)
+        #   sigmoid(0)=0.5  -> matches the 0.5 'average' baseline magnitude
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def compute_gates(self, lo: torch.Tensor, hi: torch.Tensor) -> torch.Tensor:
+        """lo, hi: [B, N, D]  ->  g: [B, depth]."""
+        s = torch.cat([lo.mean(dim=1), hi.mean(dim=1)], dim=-1)  # [B, 2D]
+        raw = self.net(s)                                        # [B, depth]
+        if self.gate_act == "tanh":
+            return torch.tanh(raw)
+        if self.gate_act == "sigmoid":
+            return torch.sigmoid(raw)
+        return raw
+
+
 # ============================================================
 # TokenRegressor (copied from V3 for self-containment)
 # ============================================================
@@ -845,7 +892,7 @@ class FCGraphAdapter(nn.Module):
 # Clean Hi-Lo Backbone
 # ============================================================
 
-MERGE_STRATEGIES = ("average", "hi_lora", "learned_router", "cross_attn", "spvae_router", "hi_lora_router")
+MERGE_STRATEGIES = ("average", "hi_lora", "learned_router", "cross_attn", "spvae_router", "hi_lora_router", "layerwise_gate")
 
 
 class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
@@ -871,6 +918,10 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
         merge_strategy: str = "average",
         hi_inject_last_n: int = 4,
         hi_patch_size: int = 25,
+        # layerwise_gate config
+        layerwise_gate_bottleneck: int = 16,
+        layerwise_gate_act: str = "tanh",
+        layerwise_gate_share_blocks: bool = False,
     ):
         super().__init__(
             img_size=224, patch_size=patch_size, in_chans=3, num_classes=0,
@@ -912,8 +963,17 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
         #          no extra modules needed here, just the flag.
         self.learned_router: Optional[LearnedRouter] = None
         self.cross_attn_layer: Optional[nn.MultiheadAttention] = None
+        self.layerwise_gate: Optional[LayerwiseHiLoGate] = None
+        self.layerwise_gate_share_blocks: bool = bool(layerwise_gate_share_blocks)
         if merge_strategy in ("learned_router", "hi_lora_router"):
             self.learned_router = LearnedRouter(embed_dim)
+        if merge_strategy == "layerwise_gate":
+            self.layerwise_gate = LayerwiseHiLoGate(
+                embed_dim,
+                depth=depth,
+                bottleneck=int(layerwise_gate_bottleneck),
+                gate_act=str(layerwise_gate_act),
+            )
         if merge_strategy == "cross_attn":
             self.cross_attn_layer = nn.MultiheadAttention(
                 embed_dim, num_heads=min(4, num_heads), batch_first=False,
@@ -1267,6 +1327,31 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
             tok = torch.cat([tok[:, :1, :], prompt_tokens, tok[:, 1:, :]], dim=1)
             _n_prompts = K
         _prefix_len = 1 + _n_prompts  # CLS + prompts (used by merge step)
+
+        # layerwise_gate: per-layer gated residual injection of hi. One tiny
+        # gate net (sees pooled initial lo+hi) emits `depth` scalars; at every
+        # block the lo stream gets  + g_l * hi.
+        if self.merge_strategy == "layerwise_gate":
+            if tok_hi is None:
+                for blk in self.blocks:
+                    tok = blk(tok)
+                return self.norm(tok)
+            H = tok_hi                                   # [B, N, D] hi tokens
+            g = self.layerwise_gate.compute_gates(tok_lo, H)  # [B, depth]
+            self._last_gate_mean = g.mean().item()
+            self.last_aux["layerwise_gate_per_layer"] = g.mean(dim=0).detach()
+            share = self.layerwise_gate_share_blocks
+            # hi only ever lands in the body region (after CLS+prompts), so
+            # zero-pad the prefix rows once -> each block is a single
+            # out-of-place add instead of slice+slice+cat (autograd-safe).
+            H_pad = F.pad(H, (0, 0, _prefix_len, 0))     # [B, _prefix_len+N, D]
+            for li, blk in enumerate(self.blocks):
+                tok = blk(tok)
+                if share:
+                    H = blk(H)
+                    H_pad = F.pad(H, (0, 0, _prefix_len, 0))
+                tok = tok + g[:, li].view(b, 1, 1) * H_pad
+            return self.norm(tok)
 
         merge_k = self.merge_block_idx
 

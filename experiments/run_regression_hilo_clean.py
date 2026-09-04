@@ -184,6 +184,9 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
         merge_strategy=args.merge_strategy,
         hi_inject_last_n=int(args.hi_inject_last_n),
         hi_patch_size=int(args.hi_patch_size),
+        layerwise_gate_bottleneck=int(getattr(args, "layerwise_gate_bottleneck", 16)),
+        layerwise_gate_act=str(getattr(args, "layerwise_gate_act", "tanh")),
+        layerwise_gate_share_blocks=bool(getattr(args, "layerwise_gate_share_blocks", False)),
         max_ch_idx=_max_ch_idx,
         **backbone_kwargs,
     )
@@ -363,6 +366,7 @@ def unfreeze_merge_params(model: nn.Module):
         "hi_lora_router": ["learned_router"],
         "cross_attn": ["cross_attn_layer"],
         "spvae_router": ["enc_s_lo", "enc_s_hi", "enc_p_lo", "enc_p_hi"],
+        "layerwise_gate": ["layerwise_gate"],
     }.get(strategy, [])
     for name in names:
         mod = getattr(b, name, None)
@@ -397,7 +401,8 @@ def _is_hi_param(name: str, backbone) -> bool:
             if name.startswith(prefix) and (".A." in name or ".B." in name):
                 return True
     # Merge modules (router, cross-attn)
-    if "learned_router" in name or "cross_attn_layer" in name:
+    if ("learned_router" in name or "cross_attn_layer" in name
+            or "layerwise_gate" in name):
         return True
     # ECoG fuser / channel adapter adapts to hi-freq too
     if "ecog_fuser" in name or "channel_adapter" in name:
@@ -618,7 +623,15 @@ def main():
     p.add_argument("--hi_patch_size", type=int, default=25)
     p.add_argument("--hi_inject_last_n", type=int, default=4)
     p.add_argument("--merge_strategy", type=str, default="average",
-                    choices=["average", "hi_lora", "learned_router", "cross_attn", "spvae_router", "hi_lora_router"])
+                    choices=["average", "hi_lora", "learned_router", "cross_attn",
+                             "spvae_router", "hi_lora_router", "layerwise_gate"])
+    p.add_argument("--layerwise_gate_bottleneck", type=int, default=16,
+                    help="Hidden width of the layer-wise gate MLP")
+    p.add_argument("--layerwise_gate_act", type=str, default="tanh",
+                    choices=["tanh", "sigmoid", "none"],
+                    help="Gate activation; tanh starts at 0 (lo-only) and can suppress hi")
+    p.add_argument("--layerwise_gate_share_blocks", action="store_true",
+                    help="Also push the hi stream through each block (shared weights)")
     p.add_argument("--stream", type=str, default="both",
                     choices=["both", "lo_only", "hi_only"],
                     help="Which stream(s) to use: both (default), lo_only, hi_only")
