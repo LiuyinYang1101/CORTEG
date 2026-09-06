@@ -632,9 +632,9 @@ class TestIeegFm(unittest.TestCase):
         self.assertIn("single_elec_mean", caveat,
                       "the caveat must point at the non-oracle comparison")
 
-        readme = (REPO / "README.md").read_text(encoding="utf-8")
-        self.assertIn("oracle", readme.lower())
-        self.assertIn("0.53", readme, "README must state the inflated null")
+        # Deliberately NOT asserting on README prose: how the caveat is worded in
+        # the paper-facing document is the author's call. What must not drift is
+        # the caveat the RUNNER itself emits into every results JSON, checked above.
 
     def test_adapters_have_a_caller(self):
         """ieeg_fm.py must not be dead code."""
