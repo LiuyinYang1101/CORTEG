@@ -466,6 +466,28 @@ class TokenRegressor(nn.Module):
             ).to(device)
         return nn.Linear(dim, self.d_out).to(device)
 
+    def materialize_head(self, embed_dim: int, num_tokens: Optional[int] = None) -> None:
+        """Build self.head NOW, before the optimizer is created.
+
+        The head is otherwise built lazily on the first forward, which means an
+        optimizer constructed from model.parameters() at training start does not
+        contain it: its gradients are computed and discarded, and the readout
+        stays at its random initialisation for the whole run. Nothing errors, and
+        the loss still falls, because the backbone can steer the pooled feature
+        to suit a fixed projection.
+        """
+        if self.head is not None:
+            return
+        if self.token_mode in ("cls", "mean"):
+            dim = int(embed_dim)
+        elif self.token_mode == "flatten":
+            if num_tokens is None:
+                raise ValueError("materialize_head: token_mode='flatten' requires num_tokens")
+            dim = int(num_tokens) * int(embed_dim)
+        else:
+            raise ValueError(f"materialize_head: unknown token_mode={self.token_mode}")
+        self.head = self._build_head(dim, torch.device("cpu"))
+
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         if self.include_cls:
             feat = tokens

@@ -224,6 +224,12 @@ def build_corteg(C: int, T_lo: int, xyz_m: np.ndarray, args):
         model, n_last=args.lora_last_n, r=args.lora_r, alpha=args.lora_alpha,
         dropout=args.lora_dropout, targets=tuple(LORA_TARGETS.split(",")))
     unfreeze_merge_params(model)
+    # Build the readout NOW. It is otherwise created on the first forward, i.e.
+    # after the optimizer has been built from model.parameters(), so it never
+    # enters the optimizer and stays at its random init for the whole run.
+    _embed = getattr(model.backbone, "embed_dim", None)
+    if _embed is not None:
+        model.head.materialize_head(embed_dim=int(_embed))
     return model
 
 
