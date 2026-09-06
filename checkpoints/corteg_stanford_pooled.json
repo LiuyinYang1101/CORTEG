@@ -81,5 +81,5 @@
     "save_root": "",
     "save_ckpt_path": ""
   },
-  "readout_note": "The readout Linear is at its random initialisation. It is built lazily on the first forward pass, after the optimizer was constructed from model.parameters(), so it never received an update. Verified: indistinguishable from a fresh uniform init (KS p=0.62 against U(-1/sqrt(512), +1/sqrt(512)); 0 of 2560 weights outside the init bound). This does not affect the reported score -- a random 512->5 projection has rank 5, so the adapted backbone still reaches any required output."
+  "readout_note": "This checkpoint's readout is at its random initialisation: the run predates the fix that builds the readout before the optimizer instead of lazily on the first forward. Verified: indistinguishable from a fresh uniform draw (KS p=0.62; 0 of 2560 weights outside the init bound), where a trained readout at the same lr/wd is distinguishable at p<1e-4. It does not affect the reported score -- a random 512->5 projection has rank 5, so the adapted backbone still reaches any required output, and 0.5537 reproduces exactly. The training code in this repository DOES train the readout; fitting one on these same features scores 0.5643 (+0.0106), so retraining yields a slightly better model than this file."
 }

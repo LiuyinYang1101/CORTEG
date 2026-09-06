@@ -247,6 +247,15 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
         head_dropout=float(args.head_dropout),
         head_hidden=int(getattr(args, "head_hidden", 0)),
     )
+
+    # Build the readout NOW, before any optimizer is constructed. It is otherwise
+    # created on the first forward, so an optimizer built from model.parameters()
+    # omits it: its gradients are computed and discarded and it stays at its random
+    # initialisation for the whole run. Nothing errors and the loss still falls,
+    # because the backbone can steer the pooled feature to suit a fixed projection.
+    _embed = getattr(backbone, "embed_dim", None)
+    if _embed is not None and getattr(model.head, "token_mode", "") in ("cls", "mean"):
+        model.head.materialize_head(embed_dim=int(_embed))
     return model
 
 
