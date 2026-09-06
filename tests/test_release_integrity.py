@@ -449,6 +449,37 @@ class TestBrainTreebank(unittest.TestCase):
         self.assertGreater(float(bias.max() - bias.min()), 1.0,
                            "the init bias is nearly flat; the KNN prior is not peaked")
 
+    def test_stanford_readout_head_is_actually_trained(self):
+        """Same guard as the BrainTreebank one, but through build_model.
+
+        These need to be separate tests. build_corteg and build_model each
+        materialise the head independently, so a single test through one of them
+        stays green while the other silently regresses to an untrained readout.
+        """
+        import types
+        import numpy as np
+        import paths as paths_mod
+        cfg = REPO / "configs" / "steegformer_small.json"
+        rel = json.loads(cfg.read_text(encoding="utf-8"))["pretrained"]["path"]
+        if not os.path.exists(paths_mod.resolve_pretrained_path(rel)):
+            self.skipTest("ST-EEGFormer backbone not present; see README.md")
+        from experiments.run_regression_hilo_clean import build_model
+
+        base = json.loads((REPO / "checkpoints" / "corteg_stanford_pooled.json")
+                          .read_text(encoding="utf-8"))["build_args"]
+        a = dict(base)
+        a.update(model_kwargs_json=str(cfg), no_pretrained=False)
+        xyz = np.random.RandomState(0).randn(46, 3).astype(np.float32) * 30.0
+        model = build_model(types.SimpleNamespace(**a), C_in=46, T_in=128,
+                            ecog_xyz_m=xyz, d_out=5)
+
+        self.assertIsNotNone(model.head.head,
+                             "the readout does not exist at build time, so an optimizer "
+                             "built from model.parameters() will not contain it")
+        ids = {id(p) for p in model.parameters() if p.requires_grad}
+        self.assertIn(id(model.head.head.weight), ids,
+                      "the readout is not among the trainable parameters")
+
     def test_btb_readout_head_is_actually_trained(self):
         """The head must exist before the optimizer, or it never gets updated.
 

@@ -44,7 +44,6 @@ import numpy as np
 import ieeg_fm
 import paths
 from data.braintreebank import (
-    assert_brant_fs_fixed,
     btb_output_root,
     btb_root,
     build_time_to_sample,

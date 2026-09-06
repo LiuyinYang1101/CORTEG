@@ -118,6 +118,12 @@ def build_cbramod(args, d_out: int = 5) -> nn.Module:
         print(f"  Loaded: missing={len(msg.missing_keys)}, unexpected={len(msg.unexpected_keys)}")
         if msg.missing_keys:
             print(f"  Missing: {msg.missing_keys[:5]}")
+        n_loaded = sum(1 for k in backbone.state_dict() if k not in set(msg.missing_keys))
+        if n_loaded == 0:
+            raise SystemExit(
+                f"{pretrained_path} loaded zero tensors into the backbone. The load is\n"
+                "  strict=False, so a checkpoint for a different architecture reports\n"
+                "  success while leaving the model at random init.")
     elif getattr(args, "no_pretrained", False):
         print("  CBraMod: random init (--no_pretrained)")
     else:
