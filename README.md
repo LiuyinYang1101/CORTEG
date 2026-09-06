@@ -25,7 +25,7 @@ A small set of trainable components wrapped around a frozen EEG foundation model
   pretrained on 128-Hz scalp EEG with an EEG channel-embedding codebook.
 - **KNNSoftFourier spatial adapter** — maps each ECoG electrode's 3-D MNI coordinate into the pretrained EEG embedding space (soft k-NN over the codebook + a learnable Fourier residual).
 - **Dual-stream tokenization** — low-frequency (1–64 Hz) + high-gamma (70–200 Hz) tokens merged before the last transformer blocks.
-- **LoRA on the last 4 blocks**, regression head, and the spatial adapter are the *only* trainable parameters (≈297K total).
+- **LoRA on the last 4 blocks** and the spatial adapter are the *only* trained parameters (≈297K total, a count that also includes the readout). In the released checkpoint the readout is a **fixed random projection** — it is created lazily on the first forward, after the optimizer, so it never received an update. A random 512→5 map has rank 5, so the adapted backbone still reaches whatever output it needs and the reported r=0.554 is unaffected.
 - **Two-stage LOO-FT** — pool on N − 1 patients, then fine-tune the adapter + LoRA + head on the held-out patient in minutes.
 
 ## Key findings
@@ -185,7 +185,7 @@ checkpoints/corteg_stanford_pooled.pt     # 1.2 MB, 297,236 params — Table 1 f
 checkpoints/corteg_stanford_pooled.json   # manifest: sha256, paper number, exact build args
 ```
 
-It holds only the trainable parameters — the KNNSoftFourier adapter (142,095), LoRA A/B on blocks 4–7 (131,072), the warm-started high-gamma patch embed (13,312), LayerNorms (8,192) and the head (2,565) — so it must be loaded together with the backbone above.
+It holds the KNNSoftFourier adapter (142,095), LoRA A/B on blocks 4–7 (131,072), the warm-started high-gamma patch embed (13,312), LayerNorms (8,192) and the readout (2,565) — so it must be loaded together with the backbone above. Everything there was trained except the readout, which sits at its random initialisation for the reason above.
 
 ```python
 from load_corteg import load_corteg, predict

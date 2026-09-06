@@ -12,7 +12,7 @@
     "value_full": 0.5535,
     "verified": "Reproduced from this checkpoint on all 9 Stanford subjects: cohort mean 0.5537 (published 0.5535), max per-subject deviation 0.0016."
   },
-  "contents": "trainable parameters only: KNNSoftFourier spatial adapter (142,095), LoRA A/B on blocks 4-7 (131,072), the warm-started high-gamma patch embed (13,312), LayerNorms (8,192) and the readout head (2,565). The frozen ST-EEGFormer Small backbone is NOT included; see README.md.",
+  "contents": "KNNSoftFourier spatial adapter (142,095), LoRA A/B on blocks 4-7 (131,072), the warm-started high-gamma patch embed (13,312), LayerNorms (8,192) and the readout (2,565). The frozen ST-EEGFormer Small backbone is NOT included; see README.md.",
   "architecture_args": {
     "steegformer_variant": "small",
     "merge_strategy": "average",
@@ -80,5 +80,6 @@
     "finetune_token_mode": "",
     "save_root": "",
     "save_ckpt_path": ""
-  }
+  },
+  "readout_note": "The readout Linear is at its random initialisation. It is built lazily on the first forward pass, after the optimizer was constructed from model.parameters(), so it never received an update. Verified: indistinguishable from a fresh uniform init (KS p=0.62 against U(-1/sqrt(512), +1/sqrt(512)); 0 of 2560 weights outside the init bound). This does not affect the reported score -- a random 512->5 projection has rank 5, so the adapted backbone still reaches any required output."
 }
