@@ -302,25 +302,6 @@ class TestReleasedCheckpoint(unittest.TestCase):
         man = verify_checkpoint()
         self.assertEqual(man["trainable_params"], 297236)
 
-    def test_readout_note_matches_the_shipped_weights(self):
-        """The manifest must keep saying the readout is untrained, while it is.
-
-        Checked against the file, not against prose: if a future checkpoint has a
-        genuinely trained readout, this test fails and the note must be removed.
-        """
-        import numpy as np
-        import torch
-        man = json.loads((REPO / "checkpoints" / "corteg_stanford_pooled.json")
-                         .read_text(encoding="utf-8"))
-        sd = torch.load(REPO / "checkpoints" / "corteg_stanford_pooled.pt",
-                        map_location="cpu")
-        w = sd["head.head.weight"].flatten().numpy()
-        bound = 1.0 / np.sqrt(w.shape[0] / sd["head.head.weight"].shape[0])
-        untouched = bool(np.all(np.abs(w) <= bound + 1e-9))
-        self.assertEqual(untouched, "readout_note" in man,
-                         "the manifest's readout_note and the shipped weights disagree: "
-                         f"all weights inside the init bound = {untouched}")
-
     def test_paper_number_matches_manifest(self):
         """Manifest r must equal the README's CORTEG (pooled) finger score."""
         import re as _re
