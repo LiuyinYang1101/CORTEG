@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LaBraM competing FM baseline — uses IDENTICAL pipeline to run_regression_phase4.py.
+"""LaBraM competing FM baseline — uses IDENTICAL pipeline to run_regression_hilo_clean.py.
 
 Only differences from STEEGFormer:
 1. Backbone: LaBraM NeuralTransformer instead of HiLoCleanBackbone
@@ -248,7 +248,7 @@ def make_step_fn(pass_sid: bool = False):
 
 
 # ============================================================
-# Main — mirrors run_regression_phase4.py exactly
+# Main — mirrors run_regression_hilo_clean.py exactly
 # ============================================================
 
 def main():
@@ -341,7 +341,7 @@ def main():
     collate_fn = make_collate_fn(None)
 
     # ============================================================
-    # Data preparation — IDENTICAL to run_regression_phase4.py
+    # Data preparation — IDENTICAL to run_regression_hilo_clean.py
     # ============================================================
     def prepare_subject(sd, sid):
         n = int(sd.y_tr.shape[0])

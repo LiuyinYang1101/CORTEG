@@ -2,8 +2,11 @@
 
 These guard the class of defect that made the v1 release reproduce the wrong
 experiment: a shell script that silently disagrees with the runner it calls.
-Everything here is static except the two tests in `TestPretrainedLoads`, which
-build a model on CPU and skip cleanly when the ST-EEGFormer backbone is absent.
+Most checks are static. The few that build a model run on CPU and skip cleanly
+when the ST-EEGFormer backbone is absent. Each area also has its own test file
+(tests/test_btb_corteg.py, test_btb_baselines.py, test_btb_fm.py,
+test_fm_regression.py, test_paper_cells.py, test_demo_data.py); this one holds
+the checks that span the whole release.
 
 Run:  python -m unittest discover -s tests -v
 """
@@ -21,10 +24,12 @@ REPO = Path(__file__).resolve().parent.parent
 RUNNER = REPO / "experiments" / "run_regression_hilo_clean.py"
 BTB_RUNNER = REPO / "experiments" / "run_btb_classification.py"
 FM_RUNNER = REPO / "experiments" / "run_ieeg_fm_baselines.py"
+POPT_FT_RUNNER = REPO / "experiments" / "run_popt_finetune_btb.py"
 ALL_SCRIPTS = sorted((REPO / "scripts").glob("*.sh"))
 RUNNER_CALL = "python -m experiments.run_regression_hilo_clean"
 BTB_RUNNER_CALL = "python -m experiments.run_btb_classification"
 FM_RUNNER_CALL = "python -m experiments.run_ieeg_fm_baselines"
+POPT_FT_RUNNER_CALL = "python -m experiments.run_popt_finetune_btb"
 
 # Each script is validated against the runner it actually calls; checking a
 # BrainTreebank script against the Stanford parser reports every BTB flag as
@@ -162,6 +167,122 @@ def _invocations(text: str, runner_call: str = RUNNER_CALL):
     return out
 
 
+_PY_M = re.compile(r"python -m ([A-Za-z_][\w.]*)")
+
+
+def _module_file(module: str) -> Path:
+    """experiments.run_x -> REPO/experiments/run_x.py."""
+    return REPO.joinpath(*module.split(".")).with_suffix(".py")
+
+
+def _runner_calls(text: str):
+    """(module, flags text) for every runner call in a script.
+
+    Continuations are joined and bash arrays expanded, so each call is one
+    logical line. A call through a wrapper function (`reg ...` and `brant ...`
+    in scripts/table1_ieeg_fm_stanford.sh) is attributed to the one module its
+    body runs; the body's own `python -m` line counts as a call in its own
+    right, which covers the flags the wrapper adds. Only the text after the
+    module name is returned, so a flag is always judged by the runner it goes to.
+    """
+    arrays = _arrays(text)
+    wrappers = {}
+    for name, body in _functions(text).items():
+        mods = set(_PY_M.findall(body))
+        if len(mods) == 1:
+            wrappers[name] = mods.pop()
+
+    def expand(s, depth=0):
+        for name, body in arrays.items():
+            s = s.replace('"${%s[@]}"' % name, body)
+        return expand(s, depth + 1) if depth < 5 and any(
+            '"${%s[@]}"' % n in s for n in arrays) else s
+
+    out = []
+    for line in text.replace("\\\n", " ").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        m = _PY_M.search(line)
+        if m:
+            out.append((m.group(1), expand(line[m.end():])))
+            continue
+        word = stripped.split()[0]
+        if word in wrappers:
+            out.append((wrappers[word], expand(stripped[len(word):])))
+    return out
+
+
+def _flag_problems(name: str, calls) -> list:
+    """Unknown flags, values outside `choices` and values given to store_true flags."""
+    problems, specs = [], {}
+    for module, flags in calls:
+        path = _module_file(module)
+        if not path.exists():
+            problems.append(f"{name}: calls {module}, which does not exist")
+            continue
+        spec = specs.setdefault(module, parser_spec(path))
+        for flag, val in script_flags(flags):
+            if flag not in spec:
+                problems.append(f"{name}: {module}: unknown flag {flag}")
+                continue
+            info = spec[flag]
+            if info["store_true"] and val is not None:
+                problems.append(f"{name}: {module}: {flag} is store_true, got {val!r}")
+            elif info["choices"] and val is not None and val not in info["choices"]:
+                problems.append(f"{name}: {module}: {flag}={val!r} not in "
+                                f"{sorted(info['choices'])}")
+    return problems
+
+
+class TestEveryScript(unittest.TestCase):
+    """Checks that apply to every script in scripts/, whichever runner it calls."""
+
+    def test_every_script_calls_an_existing_runner(self):
+        self.assertTrue(ALL_SCRIPTS, "no shell scripts found")
+        for sh in ALL_SCRIPTS:
+            with self.subTest(script=sh.name):
+                calls = _runner_calls(sh.read_text(encoding="utf-8"))
+                self.assertTrue(calls, f"{sh.name} calls no runner")
+                missing = sorted({m for m, _ in calls if not _module_file(m).exists()})
+                self.assertEqual(missing, [], f"{sh.name} calls missing modules")
+
+    def test_no_script_passes_a_flag_its_runner_lacks(self):
+        """Per call, against the parser of the runner that call reaches.
+
+        This is the release-wide version of the per-runner checks below; it also
+        covers the scripts that call two runners or go through a wrapper function.
+        """
+        problems = []
+        for sh in ALL_SCRIPTS:
+            problems += _flag_problems(sh.name, _runner_calls(sh.read_text(encoding="utf-8")))
+        self.assertEqual(problems, [], "\n" + "\n".join(problems))
+
+    def test_scripts_resolve_the_output_root_like_the_runners(self):
+        """CORTEG_OUTPUT_ROOT, then ECOG_OUTPUT_ROOT, then the default.
+
+        paths.get_output_root() uses that order for the caches the runners read,
+        so a script that skipped ECOG_OUTPUT_ROOT would write its results in one
+        tree and its caches in another.
+        """
+        for sh in ALL_SCRIPTS:
+            text = sh.read_text(encoding="utf-8")
+            for m in re.finditer(r"\$\{CORTEG_OUTPUT_ROOT:-", text):
+                with self.subTest(script=sh.name, at=m.start()):
+                    self.assertTrue(text[m.end():].startswith("${ECOG_OUTPUT_ROOT:-"),
+                                    f"{sh.name}: output root skips ECOG_OUTPUT_ROOT")
+
+    def test_scripts_are_valid_bash(self):
+        import shutil
+        import subprocess
+        if shutil.which("bash") is None:
+            self.skipTest("bash not available")
+        for sh in ALL_SCRIPTS:
+            with self.subTest(script=sh.name):
+                r = subprocess.run(["bash", "-n", str(sh)], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+
 class TestScriptsMatchRunner(unittest.TestCase):
     """Every flag a script passes must exist, and its value must be legal."""
 
@@ -198,18 +319,21 @@ class TestScriptsMatchRunner(unittest.TestCase):
 
     def test_every_runner_call_loads_a_pretrained_backbone(self):
         """The v1 defect: no script passed --model_kwargs_json, so every run
-        silently trained a randomly-initialised backbone."""
+        silently trained a randomly-initialised backbone.
+
+        A --no_pretrained call must pass the config too: the config also carries
+        the backbone's regularisation (drop_path_rate), and a random-init control
+        without it trains a different backbone from the arms it controls for
+        (the same rule as the BrainTreebank test below).
+        """
         problems = []
         for sh in SCRIPTS:
             text = sh.read_text(encoding="utf-8")
             if RUNNER_CALL not in text:
                 continue
             for label, resolved in _invocations(text):
-                # --no_pretrained exempts THIS call only, never the whole file:
-                # one random-init row must not disable the check for its siblings.
-                if "--model_kwargs_json" in resolved or "--no_pretrained" in resolved:
-                    continue
-                problems.append(f"{sh.name}: {label[:70]!r} loads no backbone")
+                if "--model_kwargs_json" not in resolved:
+                    problems.append(f"{sh.name}: {label[:70]!r} loads no backbone")
         self.assertEqual(problems, [], "\n" + "\n".join(problems))
 
     def test_referenced_configs_exist(self):
@@ -403,15 +527,21 @@ class TestBrainTreebank(unittest.TestCase):
         self.assertEqual(problems, [], "\n" + "\n".join(problems))
 
     def test_every_btb_call_loads_a_backbone(self):
-        """Same defect as Stanford: a run without the config is the ablation."""
+        """Every call passes the backbone config, the random-init control included.
+
+        The config carries the backbone's regularisation (drop_path_rate 0.1) as
+        well as the checkpoint path, and --no_pretrained skips only the
+        checkpoint. The paper's control kept the config, so a --no_pretrained
+        call without it trains a different backbone from the arms it controls
+        for. That is why --no_pretrained no longer exempts a call here.
+        """
         problems = []
         for sh in BTB_SCRIPTS:
             for label, resolved in _invocations(sh.read_text(encoding="utf-8"),
                                                 BTB_RUNNER_CALL):
-                if ("--model_kwargs_json" not in resolved
-                        and "--no_pretrained" not in resolved):
+                if "--model_kwargs_json" not in resolved:
                     problems.append(f"{sh.name}: {label[:60]!r}")
-        self.assertEqual(problems, [], f"calls with no backbone: {problems}")
+        self.assertEqual(problems, [], f"calls with no backbone config: {problems}")
 
     def test_knn_adapter_starts_from_the_knn_prior(self):
         """sigma=0 zeroes every Gaussian weight, so the adapter starts uniform.
@@ -513,19 +643,42 @@ class TestBrainTreebank(unittest.TestCase):
         self.assertIn(id(model.head.head.weight), ids,
                       "the head is not among the trainable parameters")
 
-    def test_event_caches_are_keyed_by_seed(self):
-        """seed and max_per_class choose WHICH events are drawn.
+    def test_event_caches_are_keyed_by_event_seed(self):
+        """The paper trains seeds 42, 1 and 2 on ONE event selection drawn with seed 42.
 
-        The paper averages seeds 1, 2 and 42. If they are not in the cache key,
-        all three reuse one event selection while reporting different seeds.
+        The event draw must therefore be independent of the training seed and
+        part of the cache key. Keyed on --seed instead, seeds 1 and 2 score other
+        events than the paper did (only a quarter to a half of them are in the
+        seed-42 draw), and the seed SD mixes event sampling into what should be
+        initialisation variance alone.
         """
-        for runner in (BTB_RUNNER, FM_RUNNER):
-            src = runner.read_text(encoding="utf-8")
-            tag = src[src.index("    tag = "):]
-            tag = tag[:tag.index(".npz")]
-            self.assertIn("args.seed", tag, f"{runner.name}: cache key omits the seed")
-            self.assertIn("max_per_class", tag,
-                          f"{runner.name}: cache key omits max_per_class")
+        import argparse
+        import experiments.run_btb_classification as btb
+
+        # The CORTEG runner has a key function, so check it as behaviour.
+        base = dict(endpoint="sentence_onset", neg_mode="upstream", event_seed=42,
+                    max_per_class=900, win_sec=1.5, pre_sec=0.0,
+                    hga_low=70.0, hga_high=200.0)
+
+        def key(**over):
+            return btb.cache_tag("sub_3", "trial000",
+                                 argparse.Namespace(**{**base, **over}))
+
+        self.assertEqual(key(seed=1), key(seed=42),
+                         "run_btb_classification.py: the training seed changes the event cache")
+        self.assertNotEqual(key(event_seed=1), key(),
+                            "run_btb_classification.py: cache key omits the event seed")
+        self.assertNotEqual(key(max_per_class=100), key(),
+                            "run_btb_classification.py: cache key omits max_per_class")
+
+        # The FM runner builds its key inline; check the source.
+        src = FM_RUNNER.read_text(encoding="utf-8")
+        tag = src[src.index("    tag = "):]
+        tag = tag[:tag.index(".npz")]
+        self.assertIn("args.event_seed", tag, f"{FM_RUNNER.name}: cache key omits the event seed")
+        self.assertIn("max_per_class", tag, f"{FM_RUNNER.name}: cache key omits max_per_class")
+        self.assertNotIn("args.seed", tag,
+                         f"{FM_RUNNER.name}: the training seed is in the event cache key")
 
     def test_canonical_trials_are_not_all_trial000(self):
         """sub_1/2/6 are not trial000; defaulting there scores a different film."""
@@ -584,15 +737,21 @@ class TestBrainTreebank(unittest.TestCase):
 
 
     def test_task_b_footprint_is_wider_than_task_a(self):
-        """Task B centres a 5 s window, so its overlap footprint is 5.0, not 1.5.
+        """The upstream-style Task B arms centre a 5 s window, so their footprint is 5.0.
 
-        Passing Task A's 1.5 s to the split for a Task B run would under-embargo
-        every fold boundary and leak.
+        That applies to the frozen and fine-tuned FM arms. CORTEG and the scratch
+        baselines read [c, c+1.5] on Task B too, so their footprint stays 1.5
+        (ARM_FOOTPRINT_SEC['word_nonword_corteg']) and passing 1.5 to the split for
+        such a run does not under-embargo. Every footprint must stay below the
+        shared 7 s embargo.
         """
-        from data.braintreebank import TILE_SEC, WIN_SEC, EMBARGO_SEC
+        from data.braintreebank import (ARM_FOOTPRINT_SEC, EMBARGO_SEC, TILE_SEC,
+                                        WIN_SEC)
         self.assertEqual(WIN_SEC, 5.0)
         self.assertEqual(TILE_SEC, 1.0)
-        self.assertGreater(EMBARGO_SEC, WIN_SEC,
+        self.assertEqual(ARM_FOOTPRINT_SEC["word_nonword_upstream"], WIN_SEC)
+        self.assertEqual(ARM_FOOTPRINT_SEC["word_nonword_corteg"], 1.5)
+        self.assertGreater(EMBARGO_SEC, max(ARM_FOOTPRINT_SEC.values()),
                            "embargo must exceed the widest shared footprint")
 
     def test_brant_fs_guard_fires_on_sub_9(self):
@@ -617,20 +776,21 @@ class TestIeegFm(unittest.TestCase):
     """The intracranial-FM comparison arms."""
 
     def test_fm_script_flags_are_known_and_valid(self):
-        spec = parser_spec(FM_RUNNER)
+        """Every call is checked against the runner it invokes.
+
+        The BrainTreebank FM script calls two runners with different flags (only
+        run_popt_finetune_btb has --mode; only run_ieeg_fm_baselines has --fm and
+        --arm), so checking every flag in the file against one parser reports
+        false unknowns and misses flags given to the wrong runner.
+        """
         self.assertTrue(FM_SCRIPTS, "no intracranial-FM script found")
         problems = []
         for sh in FM_SCRIPTS:
-            for flag, val in script_flags(sh.read_text(encoding="utf-8")):
-                if flag not in spec:
-                    problems.append(f"{sh.name}: unknown flag {flag}")
-                    continue
-                info = spec[flag]
-                if info["store_true"] and val is not None:
-                    problems.append(f"{sh.name}: {flag} is store_true, got {val!r}")
-                elif info["choices"] and val is not None and val not in info["choices"]:
-                    problems.append(
-                        f"{sh.name}: {flag}={val!r} not in {sorted(info['choices'])}")
+            calls = _runner_calls(sh.read_text(encoding="utf-8"))
+            modules = {m for m, _ in calls}
+            self.assertIn("experiments.run_ieeg_fm_baselines", modules, sh.name)
+            self.assertIn("experiments.run_popt_finetune_btb", modules, sh.name)
+            problems += _flag_problems(sh.name, calls)
         self.assertEqual(problems, [], "\n" + "\n".join(problems))
 
     def test_no_third_party_weights_or_code_are_vendored(self):
@@ -658,26 +818,31 @@ class TestIeegFm(unittest.TestCase):
         self.assertEqual(ENDPOINTS["word_nonword"]["win_sec"], 5.0)
 
     def test_brant_gets_its_native_context(self):
-        """Brant's patch is 6 s; a 1.5 s window would be zero-padded silently.
+        """Brant reads one 6 s patch ending at the task window's right edge.
 
-        The 6 s window is also what sizes the shared embargo: its footprint is
-        6.11 s once the resampler's filter edge is counted, and EMBARGO_SEC is 7.0.
+        That is [t-4.5, t+1.5] on Task A and [t-3.5, t+2.5] on Task B, as the
+        paper's numbers were computed; a 1.5 s window would be zero-padded
+        silently. The 6 s patch is also what sizes the shared embargo: its
+        footprint is 6.11 s once the resampler's filter edge is counted, and
+        EMBARGO_SEC is 7.0.
         """
         from data.braintreebank import EMBARGO_SEC
-        from experiments.run_ieeg_fm_baselines import BRANT_WINDOW, window_for
+        from experiments.run_ieeg_fm_baselines import (
+            BRANT_WINDOW, ENDPOINTS, footprint_for, window_for)
         import ieeg_fm
 
-        self.assertEqual(BRANT_WINDOW["win_sec"], 6.0)
-        self.assertEqual(BRANT_WINDOW["pre_sec"], -4.5)
-        # one full patch, exactly
-        self.assertEqual(ieeg_fm.BRANT_PATCH_LEN / ieeg_fm.BRANT_FS,
-                         BRANT_WINDOW["win_sec"])
-        # Brant ignores the endpoint window; the other arms do not
-        for ep in ("sentence_onset", "word_nonword"):
-            self.assertEqual(window_for("brant", ep), BRANT_WINDOW)
-            self.assertNotEqual(window_for("brainbert", ep), BRANT_WINDOW)
-        self.assertGreater(EMBARGO_SEC, BRANT_WINDOW["win_sec"] + 0.11,
-                           "embargo must exceed Brant's footprint incl. filter edge")
+        self.assertEqual(ieeg_fm.BRANT_PATCH_LEN / ieeg_fm.BRANT_FS, 6.0)   # one patch
+        self.assertEqual(BRANT_WINDOW["sentence_onset"], {"win_sec": 6.0, "pre_sec": -4.5})
+        self.assertEqual(BRANT_WINDOW["word_nonword"], {"win_sec": 6.0, "pre_sec": -3.5})
+        for ep, w in ENDPOINTS.items():
+            b = window_for("brant", ep)
+            self.assertEqual(b, BRANT_WINDOW[ep])
+            # No arm reads further into the future than any other.
+            self.assertEqual(b["pre_sec"] + b["win_sec"], w["pre_sec"] + w["win_sec"], ep)
+            self.assertEqual(window_for("brainbert", ep), w)
+            self.assertAlmostEqual(footprint_for("brant", ep), 6.11)
+            self.assertGreater(EMBARGO_SEC, footprint_for("brant", ep),
+                               "embargo must exceed Brant's footprint incl. filter edge")
 
     def test_oracle_arm_ships_its_caveat(self):
         """single_elec_max is an oracle; every place that says so must keep saying it.
@@ -705,6 +870,136 @@ class TestIeegFm(unittest.TestCase):
         callers = [f for f in REPO.glob("experiments/*.py")
                    if "ieeg_fm" in f.read_text(encoding="utf-8")]
         self.assertTrue(callers, "ieeg_fm.py has no caller")
+
+
+def _flag_dict(resolved: str) -> dict:
+    return dict(script_flags(resolved))
+
+
+class TestTable1Scripts(unittest.TestCase):
+    """The Table 1 CORTEG recipes, pinned to the arguments of the paper runs."""
+
+    POOLED = REPO / "scripts" / "table1_corteg_pooled_stanford.sh"
+    LOO = REPO / "scripts" / "table1_corteg_loo_ft.sh"
+
+    def _loo_stages(self):
+        calls = _invocations(self.LOO.read_text(encoding="utf-8"))
+        self.assertEqual(len(calls), 2, "the LOO-FT script should run exactly two stages")
+        return [_flag_dict(resolved) for _, resolved in calls]
+
+    def test_pooled_run_keeps_the_readout_frozen_like_the_paper_run(self):
+        """The Table 1 run built its readout after the optimizer, so it never trained.
+
+        --freeze_readout reproduces that; dropping it silently trains a different
+        model from the one behind 0.554 and the released checkpoint.
+        """
+        (_, resolved), = _invocations(self.POOLED.read_text(encoding="utf-8"))
+        flags = _flag_dict(resolved)
+        self.assertIn("--freeze_readout", flags)
+        self.assertEqual(flags.get("--seed"), "42")
+        self.assertEqual(flags.get("--weight_decay"), "0.005")
+
+    def test_loo_ft_stages_follow_the_paper_recipe(self):
+        """Stage 1 as the pooled row (frozen readout); Stage 2 the v3 recipe of App. A.1."""
+        s1, s2 = self._loo_stages()
+        self.assertIn("--freeze_readout", s1)
+        self.assertIn("--exclude_subjects", s1)
+        self.assertEqual(s2.get("--train_mode"), "finetune")
+        self.assertNotIn("--freeze_readout", s2, "finetune mode rejects --freeze_readout")
+        want = {"--lr": "1e-3", "--finetune_lr_adapter": "1e-2", "--batch_size": "16",
+                "--epochs": "100", "--early_stop_patience": "30", "--warmup_epochs": "10",
+                "--min_lr": "1e-6", "--weight_decay": "0.005",
+                "--finetune_modules": "head,lora,adapter"}
+        for flag, val in want.items():
+            self.assertEqual(s2.get(flag), val, f"Stage 2 {flag}")
+        self.assertNotIn("--finetune_lr_lora", s2,
+                         "LoRA must fall back to the base lr, as in the paper runs")
+        text = self.LOO.read_text(encoding="utf-8")
+        self.assertIn('--finetune_from "$OUT/stage1/checkpoints/trainable_weights.pt"', text)
+
+    def test_train_readout_cancels_freeze_readout_before_the_finetune_guard(self):
+        """The scripts pass --freeze_readout before "$@", so the off switch must win."""
+        spec = parser_spec(RUNNER)
+        self.assertTrue(spec["--freeze_readout"]["store_true"])
+        self.assertTrue(spec["--train_readout"]["store_true"])
+        src = RUNNER.read_text(encoding="utf-8")
+        i = src.index("if args.train_readout:")
+        j = src.index("args.freeze_readout = False", i)
+        k = src.index('args.freeze_readout and args.train_mode == "finetune"')
+        self.assertLess(j, k)
+
+    def test_loo_ft_refuses_an_unknown_subject_before_training(self):
+        """A misspelt subject would exclude nobody: two GPU-hours, then a crash."""
+        import shutil
+        import subprocess
+        import tempfile
+        if shutil.which("bash") is None:
+            self.skipTest("bash not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / "python_was_called"
+            stub = Path(tmp) / "python"
+            stub.write_text(f"#!/bin/sh\ntouch '{marker}'\n", encoding="utf-8")
+            stub.chmod(0o755)
+            env = dict(os.environ, PATH=f"{tmp}:{os.environ.get('PATH', '')}",
+                       CORTEG_OUTPUT_ROOT=tmp)
+            r = subprocess.run(["bash", str(self.LOO), "BP"], env=env,
+                               capture_output=True, text=True, cwd=REPO)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertFalse(marker.exists(), "the script started a run for an unknown subject")
+
+    def test_freeze_readout_keeps_the_head_lazy(self):
+        """With the flag the readout is not built before the optimizer (the paper run)."""
+        import types
+        import numpy as np
+        import paths as paths_mod
+        cfg = REPO / "configs" / "steegformer_small.json"
+        rel = json.loads(cfg.read_text(encoding="utf-8"))["pretrained"]["path"]
+        if not os.path.exists(paths_mod.resolve_pretrained_path(rel)):
+            self.skipTest("ST-EEGFormer backbone not present; see README.md")
+        from experiments.run_regression_hilo_clean import build_model
+        base = json.loads((REPO / "checkpoints" / "corteg_stanford_pooled.json")
+                          .read_text(encoding="utf-8"))["build_args"]
+        xyz = np.random.RandomState(0).randn(46, 3).astype(np.float32) * 30.0
+        for freeze in (True, False):
+            a = dict(base)
+            a.update(model_kwargs_json=str(cfg), no_pretrained=False, freeze_readout=freeze)
+            m = build_model(types.SimpleNamespace(**a), C_in=46, T_in=128,
+                            ecog_xyz_m=xyz, d_out=5)
+            if freeze:
+                self.assertIsNone(m.head.head, "--freeze_readout built the readout early")
+            else:
+                self.assertIsNotNone(m.head.head)
+
+
+class TestFmRunnersLoadPretrainedWeights(unittest.TestCase):
+    """Every FM runner reaches the released weights through ieeg_fm's loaders.
+
+    A runner that built the architecture without loading would score a random
+    network and still produce plausible-looking near-chance numbers.
+    """
+
+    LOADERS = {
+        "run_ieeg_fm_baselines.py": ("load_brainbert", "load_popt_model",
+                                     "brant_stream_embeddings"),
+        "run_popt_finetune_btb.py": ("load_popt_model",),
+        "run_ieeg_fm_regression.py": ("load_brainbert", "load_popt_model"),
+        "run_brant_regression.py": ("load_brant",),
+    }
+
+    def test_each_runner_calls_its_loaders(self):
+        for name, loaders in self.LOADERS.items():
+            src = (REPO / "experiments" / name).read_text(encoding="utf-8")
+            for loader in loaders:
+                with self.subTest(runner=name, loader=loader):
+                    self.assertIn(loader + "(", src)
+
+    def test_brant_loads_strictly(self):
+        """Brant's earlier reconstruction loaded nothing under strict=False."""
+        src = (REPO / "ieeg_fm.py").read_text(encoding="utf-8")
+        body = src[src.index("def load_brant("):]
+        body = body[:body.index("\ndef ")]
+        self.assertEqual(body.count("strict=True"), 2, "both Brant encoders must load strictly")
+        self.assertNotIn("strict=False", body)
 
 
 class TestConfigs(unittest.TestCase):
@@ -753,13 +1048,61 @@ class TestPaths(unittest.TestCase):
 
 class TestDocs(unittest.TestCase):
     def test_docs_do_not_reference_removed_scripts(self):
+        """Every file path and `python -m` module the README names must exist."""
         stale = []
-        for doc in ("README.md",):
+        for doc in ("README.md", "paper_cells/MANIFEST.md"):
             text = (REPO / doc).read_text(encoding="utf-8")
-            for ref in re.findall(r'scripts/[A-Za-z0-9_]+\.sh', text):
+            refs = set(re.findall(
+                r'\b((?:scripts|experiments|data|models|train|tests|notebooks|checkpoints|configs)'
+                r'/[A-Za-z0-9_./-]+\.(?:sh|py|ipynb|json|pt))', text))
+            refs |= {str(_module_file(m).relative_to(REPO))
+                     for m in _PY_M.findall(text)
+                     if m.split(".")[0] in ("experiments", "data", "models", "train")}
+            for ref in sorted(refs):
+                if "<" in ref or "*" in ref or "{" in ref:
+                    continue
                 if not (REPO / ref).exists():
                     stale.append(f"{doc}: {ref}")
         self.assertEqual(stale, [], "\n" + "\n".join(stale))
+
+    def test_readme_numbers_match_the_aggregators(self):
+        """The README's paper numbers are the ones the aggregators check.
+
+        scripts/aggregate_btb.py and scripts/aggregate_fm.py hold the paper's
+        values and check them against paper_cells/. The README's Expected-results
+        section and its Table 1 iEEG-FM rows must quote the same values; only the
+        numbers are checked, not the prose around them.
+        """
+        sys.path.insert(0, str(REPO / "scripts"))
+        import aggregate_btb
+        import aggregate_fm
+        text = (REPO / "README.md").read_text(encoding="utf-8")
+
+        pm = r"(0\.\d+)\s*±\s*(0\.\d+)"
+        t20 = {pair for a, b, _ in aggregate_btb.EXPECTED_T20.values() for pair in (a, b)}
+        t3 = {pair for a, b in aggregate_btb.EXPECTED_T3.values() for pair in (a, b)}
+        fm = {(m, s) for cells in aggregate_fm.EXPECTED_T18.values()
+              for m, s, _, _ in cells.values()}
+        fm |= {(m, s) for cells in aggregate_fm.EXPECTED_T1.values()
+               for m, s, _ in cells.values()}
+
+        start = text.index("\n## Expected results")
+        section = text[start:text.index("\n## ", start + 1)]
+        pairs = re.findall(pm, section)
+        self.assertTrue(pairs, "no mean ± SD in the Expected results section")
+        for mean, sd in pairs:
+            known = t20 if len(mean) == 6 else t3 | fm
+            self.assertIn((mean, sd), known, f"README quotes {mean} ± {sd}, "
+                          "which no aggregator expects")
+
+        # The Table 1 iEEG-FM rows of the headline table.
+        for fm_name, label in (("brainbert", "BrainBERT"), ("popt", "PopT"), ("brant", "Brant")):
+            row = next((l for l in text.splitlines()
+                        if l.startswith(f"| {label}") and "±" in l), None)
+            self.assertIsNotNone(row, f"README has no Table 1 {label} row")
+            got = re.findall(pm, row)
+            want = [aggregate_fm.EXPECTED_T1[fm_name][ds][:2] for ds in ("Stanford", "Ghent")]
+            self.assertEqual(got, want, f"README Table 1 {label} row")
 
     def test_readme_does_not_advertise_the_broken_eval_recipe(self):
         text = (REPO / "README.md").read_text(encoding="utf-8")

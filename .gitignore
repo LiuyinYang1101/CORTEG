@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.pytest_cache/
 
 # Environments
 .venv/
@@ -23,7 +24,7 @@ conda_env/
 .DS_Store
 Thumbs.db
 
-# Data — never committed; loaded from CORTEG_DATA_ROOT / ECOG_GHENT_ROOT
+# Data — never committed; loaded from CORTEG_DATA_ROOT / BTB_DATA_ROOT
 *.pkl
 *.pickle
 *.mat
@@ -34,19 +35,20 @@ Thumbs.db
 *.npy
 *.npz
 
-# Model weights / checkpoints — released separately (see CHECKPOINTS.md)
+# Model weights / checkpoints — third-party weights are downloaded separately
+# (README.md, Checkpoints)
 *.pt
 *.pth
 *.ckpt
 
 # ...except the released CORTEG adapter itself. It is 1.2 MB because it holds
 # only the trainable parameters (LoRA + spatial adapter + LayerNorm + head);
-# the frozen ST-EEGFormer backbone is downloaded separately (CHECKPOINTS.md).
+# the frozen ST-EEGFormer backbone is downloaded separately (README.md).
 !checkpoints/corteg_stanford_pooled.pt
 !checkpoints/*.json
 *.safetensors
 
-# Experiment outputs
+# Experiment outputs (paper_cells/ holds the published result files and IS tracked)
 outputs/
 results/
 logs/
@@ -57,3 +59,6 @@ slurm-*.out
 CORTEG.pdf
 
 *.pdf
+
+# Local Claude Code settings
+.claude/
