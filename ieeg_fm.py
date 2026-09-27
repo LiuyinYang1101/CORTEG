@@ -9,12 +9,20 @@ checkpoint you provide, named by environment variable:
                 BRAINBERT_WEIGHTS  stft_large_pretrained.pth, from the Google Drive
                                    link in that repository's README
     PopT        POPT_REPO          git clone https://github.com/czlwang/PopulationTransformer
-                POPT_WEIGHTS       pretrained_popt_brainbert_stft.pth, from
-                                   huggingface.co/PopulationTransformer/popt_brainbert_stft
+                POPT_WEIGHTS       optional: a local pretrained_popt_brainbert_stft.pth.
+                                   Unset, the same file is fetched from
+                                   huggingface.co/PopulationTransformer/popt_brainbert_stft,
+                                   which is where the paper's copy came from
                                    (PopT also needs BRAINBERT_REPO: it is defined
                                    over frozen BrainBERT embeddings)
     Brant       BRANT_SRC          Brant_src/ from huggingface.co/Daoze/Brant
-                BRANT_WEIGHTS      the checkpoint linked from that model card
+                BRANT_WEIGHTS      the directory holding time_encoder.pt and
+                                   channel_encoder.pt, linked from that model card
+
+Two Python packages are needed beyond the core install. The BrainBERT and PopT
+checkpoints both pickle an OmegaConf config, so neither loads without
+``omegaconf``; the PopT download also uses ``huggingface_hub``. Both come with
+``pip install -e .[ieeg-fm]``.
 
 The preprocessing here is not ours to choose: each model is fed exactly what it
 was pretrained on, because a foundation-model comparison is only meaningful if
@@ -33,7 +41,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -125,6 +133,19 @@ def brainbert_weights() -> str:
 
 def popt_repo() -> str:
     return _env_path("POPT_REPO", "The Population Transformer repository")
+
+
+def popt_weights() -> Optional[str]:
+    """A local PopT checkpoint from ``POPT_WEIGHTS``, or None when it is unset.
+
+    Unlike the other accessors, unset is not an error: PopT has a public
+    download (``download_popt_checkpoint``), and that is the file the paper
+    used. Set but pointing nowhere IS an error, so a typo cannot silently turn
+    an offline run into a network fetch.
+    """
+    if not os.environ.get("POPT_WEIGHTS"):
+        return None
+    return _env_path("POPT_WEIGHTS", "The PopT checkpoint named by POPT_WEIGHTS")
 
 
 def brant_src_dir() -> str:
@@ -289,14 +310,16 @@ def preprocess_window(
     return specs                                    # (C, T_frames, 40)
 
 
-# ----------------------------------------------------------------------------
-# Model loading (the demo / SpecPretrained code path)
-
-
-
 # ==========================================================================
 # BrainBERT — frozen per-electrode spectrogram encoder
 # ==========================================================================
+
+# The weights are not on Hugging Face; BrainBERT's README points to this Google
+# Drive file. PopT's per-electrode encoder is the same checkpoint.
+#   https://drive.google.com/file/d/14ZBOafR7RJ4A6TsurOXjFVMXiVH6Kd_Q/view
+BRAINBERT_GDRIVE_ID = "14ZBOafR7RJ4A6TsurOXjFVMXiVH6Kd_Q"
+BRAINBERT_WEIGHTS_FILENAME = "stft_large_pretrained.pth"
+
 
 def _maybe_unbundle(weights_path: str) -> None:
     """Repair the gdown download in place if it is the ZIP *bundle*, not a ckpt.
@@ -316,7 +339,7 @@ def _maybe_unbundle(weights_path: str) -> None:
                             for n in names)
         if is_torch_ckpt:
             return  # it's a normal torch zip checkpoint, leave it
-        inner = "stft_large_pretrained.pth"
+        inner = BRAINBERT_WEIGHTS_FILENAME
         if inner not in names:
             return  # unknown zip; let torch.load raise a clear error
         dst_dir = os.path.dirname(weights_path)
@@ -342,7 +365,7 @@ def load_brainbert(weights_path: str = "", device: str = "cuda"):
             f"BrainBERT weights not found at {weights_path}\n"
             f"Download with:\n"
             f"  mkdir -p {os.path.dirname(weights_path)}\n"
-            f"  gdown 14ZBOafR7RJ4A6TsurOXjFVMXiVH6Kd_Q -O {weights_path}\n"
+            f"  gdown {BRAINBERT_GDRIVE_ID} -O {weights_path}\n"
             f"(the download is a ZIP bundle of stft+superlet; this loader "
             f"auto-extracts the stft checkpoint.)"
         )
@@ -373,11 +396,13 @@ def brainbert_embeddings(
     batch_size: int = 256,
     model=None,
 ) -> np.ndarray:
-    """Extract frozen BrainBERT embeddings for our (N, C, T) raw ECoG.
+    """Frozen BrainBERT embeddings for (N, C, T) raw intracranial windows.
 
     Args:
-      x_raw    : (N, C, T) raw ECoG (e.g. X_raw_tr (N, C, 128)).
-      fs       : sampling rate of x_raw (Hz). Our data: 128.
+      x_raw    : (N, C, T) raw iEEG windows at `fs`.
+      fs       : sampling rate of x_raw (Hz), measured. Pass it explicitly: the
+                 windows are resampled to BrainBERT's 2048 Hz from this rate,
+                 and every caller in this repository does.
       xyz_mm   : (C, 3) electrode coords in mm. REQUIRED if reref='laplacian_xyz'.
       device   : torch device.
       reref    : 'laplacian_xyz' (faithful analogue, needs xyz) | 'car' | 'none'.
@@ -393,51 +418,61 @@ def brainbert_embeddings(
       pool == 'none'         : (N, C, T_frames, 768).
 
     The model is frozen and run under torch.no_grad().
+
+    Memory. Each forward batch is pooled as soon as it comes back, and the
+    spectrograms are built one window at a time as the batches need them. The
+    earlier version kept every unpooled (N*C, T_frames, 768) output and then
+    concatenated it, twice that at peak: ~390 GB for the largest BrainTreebank
+    subject on Task B, where the pooled result is ~1 GB. The batches, their
+    order and the numpy float32 pooling are unchanged, so the output is
+    bit-identical to pooling after concatenation (tests/test_btb_fm.py checks
+    this). Only pool='none' still holds every frame, because it returns them.
     """
     import torch
 
+    if pool not in ("default", "mean", "none"):
+        raise ValueError(f"pool must be default|mean|none, got {pool!r}")
     x_raw = np.asarray(x_raw)
     if x_raw.ndim != 3:
         raise ValueError(f"x_raw must be (N, C, T); got {x_raw.shape}")
     N, C, _ = x_raw.shape
+    if N * C == 0:
+        raise ValueError(f"x_raw has no windows or no electrodes: {x_raw.shape}")
 
     if model is None:
         model = load_brainbert(device=device)
 
-    # 1) Preprocess every window -> list of (C, T_frames, 40); T_frames is constant.
-    specs = np.stack(
-        [preprocess_window(x_raw[n], fs, xyz_mm, reref) for n in range(N)], axis=0
-    )                                                 # (N, C, T_frames, 40)
-    T_frames = specs.shape[2]
+    def spec_rows():
+        # The rows of the old (N*C, T_frames, 40) array, in the same (n, c) order.
+        for n in range(N):
+            yield from preprocess_window(x_raw[n], fs, xyz_mm, reref)
 
-    # 2) Flatten (N,C) into a batch of single-electrode spectrograms and run model.
-    flat = specs.reshape(N * C, T_frames, INPUT_DIM)  # (N*C, T_frames, 40)
-    outs = []
-    for i in range(0, flat.shape[0], batch_size):
-        chunk = torch.from_numpy(flat[i:i + batch_size]).float().to(device)
+    rows, outs = spec_rows(), []
+    T_frames = lo = hi = None
+    for i in range(0, N * C, batch_size):
+        batch = np.stack([next(rows) for _ in range(min(batch_size, N * C - i))])
+        if T_frames is None:
+            T_frames = batch.shape[1]
+            mid = T_frames // 2                       # BrainBERT centre-10 pooling
+            lo, hi = max(0, mid - POOL_HALF), mid + POOL_HALF
+        elif batch.shape[1] != T_frames:
+            raise ValueError(f"windows give {batch.shape[1]} and {T_frames} STFT frames; "
+                             f"every window must have the same length")
+        chunk = torch.from_numpy(batch).float().to(device)
         mask = torch.zeros(chunk.shape[:2], dtype=torch.bool, device=device)
         with torch.no_grad():
             rep = model.forward(chunk, mask, intermediate_rep=True)  # (b, T_frames, 768)
-        outs.append(rep.detach().cpu())
-    rep = torch.cat(outs, dim=0).numpy()              # (N*C, T_frames, 768)
-
-    # 3) Pool.
-    if pool == "default":                             # BrainBERT center-10 mean
-        mid = T_frames // 2
-        lo, hi = max(0, mid - POOL_HALF), mid + POOL_HALF
-        emb = rep[:, lo:hi].mean(axis=1)              # (N*C, 768)
-        return emb.reshape(N, C, HIDDEN_DIM)
-    elif pool == "mean":
-        emb = rep.mean(axis=1)                        # (N*C, 768)
-        return emb.reshape(N, C, HIDDEN_DIM)
-    elif pool == "none":
+        rep = rep.detach().cpu().numpy()
+        if pool == "default":
+            outs.append(rep[:, lo:hi].mean(axis=1))   # (b, 768)
+        elif pool == "mean":
+            outs.append(rep.mean(axis=1))             # (b, 768)
+        else:
+            outs.append(rep)                          # (b, T_frames, 768)
+    rep = np.concatenate(outs, axis=0)
+    if pool == "none":
         return rep.reshape(N, C, T_frames, HIDDEN_DIM)
-    raise ValueError(f"pool must be default|mean|none, got {pool!r}")
-
-
-# ----------------------------------------------------------------------------
-# Self-test
-
+    return rep.reshape(N, C, HIDDEN_DIM)
 
 
 # ==========================================================================
@@ -446,18 +481,6 @@ def brainbert_embeddings(
 
 POPT_HF_REPO = "PopulationTransformer/popt_brainbert_stft"
 POPT_HF_FILENAME = "pretrained_popt_brainbert_stft.pth"
-POPT_HF_CONFIG = "pt_custom_model.yaml"  # also in the repo; same dims as embedded model_cfg
-
-# --- BrainBERT upstream weights (Google Drive) ------------------------------ #
-# PopT's per-electrode encoder is BrainBERT STFT-large `stft_large_pretrained.pth`.
-# NOT on HF: BrainBERT README points to a Google Drive file.
-#   https://drive.google.com/file/d/14ZBOafR7RJ4A6TsurOXjFVMXiVH6Kd_Q/view
-# Download once (e.g. `gdown 14ZBOafR7RJ4A6TsurOXjFVMXiVH6Kd_Q`) and place at
-# brainbert_weights() below. This is the SAME weight file the sibling BrainBERT
-# adapter needs, so they should share it.
-BRAINBERT_GDRIVE_ID = "14ZBOafR7RJ4A6TsurOXjFVMXiVH6Kd_Q"
-BRAINBERT_WEIGHTS_FILENAME = "stft_large_pretrained.pth"
-# Default expected location (overridable via env var). Kept under datasets, not in git.
 
 # Architecture constants (verified from checkpoint state_dict shapes).
 POPT_INPUT_DIM = 768   # BrainBERT embedding dim (in_proj: 512x768)
@@ -486,13 +509,17 @@ def load_popt_model(device: str = "cuda", ckpt_path: Optional[str] = None):
 
     The checkpoint stores both the weights (`["model"]`) and the config
     (`["model_cfg"]`), so we do not need Hydra. Returns an eval-mode model on `device`.
+
+    The checkpoint is `ckpt_path` if given, else ``POPT_WEIGHTS`` if set, else
+    the Hugging Face download. The parameters are left trainable (requires_grad
+    as built); the frozen arm runs under torch.no_grad and the fine-tune arms
+    choose what to train themselves.
     """
     if torch is None:
-        raise RuntimeError("PyTorch is required (conda env: eeg311).")
+        raise RuntimeError("PyTorch is required to run PopT (pip install torch).")
     from omegaconf import OmegaConf
 
-    if ckpt_path is None:
-        ckpt_path = download_popt_checkpoint()
+    ckpt_path = ckpt_path or popt_weights() or download_popt_checkpoint()
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     if not (isinstance(ckpt, dict) and "model" in ckpt and "model_cfg" in ckpt):
         raise ValueError(
@@ -506,7 +533,7 @@ def load_popt_model(device: str = "cuda", ckpt_path: Optional[str] = None):
     missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
     if missing or unexpected:
         # Should be empty for the official checkpoint; surface anything odd.
-        print(f"[extract_popt] load_state_dict missing={missing} unexpected={unexpected}")
+        print(f"[popt] load_state_dict missing={missing} unexpected={unexpected}")
     model.eval().to(device)
     return model
 
@@ -525,8 +552,8 @@ def mni_mm_to_lip_indices(
     """Map continuous MNI XYZ (mm) to the integer (L, I, P) index triplet PopT expects.
 
     PopT/BrainTreebank coords are integer voxel-ish indices fed straight into a
-    sinusoidal positional-encoding lookup table of length `max_len`. Our Stanford/
-    Ghent coords are continuous MNI millimetres (roughly [-90, 90]). We therefore:
+    sinusoidal positional-encoding lookup table of length `max_len`. The Stanford
+    and Ghent coordinates are continuous MNI millimetres (roughly [-90, 90]), so:
 
       1. Re-orient axes to PopT's L/I/P convention:
             L (Left)     = -X   (MNI +X is Right; L grows leftward)
@@ -537,9 +564,12 @@ def mni_mm_to_lip_indices(
       3. Clip to [0, max_len-1] for safety.
 
     NOTE: This is an APPROXIMATE alignment, not a recovery of BrainTreebank's exact
-    FreeSurfer voxel indices (those are unavailable for our subjects). It preserves
+    FreeSurfer voxel indices (those do not exist for these subjects). It preserves
     relative inter-electrode geometry at ~1 mm resolution, which is what PopT's
-    spatial positional encoding actually uses. See POPT_SETUP.md "Fairness risks".
+    spatial positional encoding actually uses, but the absolute indices are not
+    the distribution PopT was pretrained on -- a known handicap for PopT on the
+    Stanford and Ghent data that does not arise on BrainTreebank, where the
+    native voxel indices are passed with ``coords_are_mni_mm=False``.
 
     Args:
         xyz_mm: (C, 3) float array, MNI millimetres, columns = [X, Y, Z].
@@ -560,7 +590,7 @@ def mni_mm_to_lip_indices(
 
 
 # --------------------------------------------------------------------------- #
-# Per-electrode BrainBERT embeddings (sibling adapter)
+# Per-electrode BrainBERT embeddings (PopT's input)
 # --------------------------------------------------------------------------- #
 def _brainbert_per_electrode_embeddings(
     x_raw: np.ndarray, fs: int, device: str, xyz_mm=None, batch_size: int = 64
@@ -568,9 +598,7 @@ def _brainbert_per_electrode_embeddings(
     """Per-electrode BrainBERT embeddings, (N, C, 768).
 
     PopT is defined over frozen BrainBERT embeddings, so it calls straight into
-    the BrainBERT section of this module. It used to import a sibling
-    `external_fms/adapters/extract_brainbert.py`, which does not exist here --
-    that import could only ever raise.
+    the BrainBERT section of this module.
     """
     emb = brainbert_embeddings(
         x_raw, fs=fs, xyz_mm=xyz_mm, device=device,
@@ -606,31 +634,41 @@ def popt_embeddings(
     """Run the BrainBERT -> PopT pipeline and return per-window population embeddings.
 
     Args:
-        x_raw: (N, C, T) raw ECoG. N windows, C electrodes, T samples (e.g. 128 @ 128 Hz).
+        x_raw: (N, C, T) raw ECoG. N windows, C electrodes, T samples at `fs`.
+               May be None when `per_electrode_embeddings` is given, since the raw
+               signal is then never read.
         xyz:   (C, 3) electrode coordinates. By default interpreted as MNI millimetres
                and converted to PopT's integer L/I/P indices via `mni_mm_to_lip_indices`.
                Set `coords_are_mni_mm=False` to pass already-integer L/I/P indices.
-        fs:    sampling rate of x_raw (default 128). Forwarded to the BrainBERT adapter,
-               which is responsible for the 2048 Hz pretrain mismatch (resample/STFT).
+        fs:    true sampling rate of x_raw; pass it explicitly (every caller in this
+               repository does). Forwarded to the BrainBERT adapter, which resamples
+               to BrainBERT's 2048 Hz. The paper's Stanford FM results use the native
+               1 kHz windows (data/stanford_native.py); the 128 Hz stream of the
+               CORTEG pickles has no content above 64 Hz and does not reproduce them.
         device: "cuda"/"cpu" (default: cuda if available).
         coords_are_mni_mm: convert xyz from mm to LIP indices when True.
         batch_size: PopT forward batch size over windows.
         per_electrode_embeddings: optional precomputed (N, C, 768) to skip BrainBERT.
-        popt_model: optional preloaded PtModelCustom (else loaded from HF).
+        popt_model: optional preloaded PtModelCustom (else `load_popt_model`).
         coord_offset: integer offset added in mm->index conversion (see that fn).
 
     Returns:
         (N, POPT_HIDDEN_DIM) == (N, 512) float32 population embeddings ([CLS] token).
     """
     if torch is None:
-        raise RuntimeError("PyTorch is required (conda env: eeg311).")
+        raise RuntimeError("PyTorch is required to run PopT (pip install torch).")
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    x_raw = np.asarray(x_raw)
-    if x_raw.ndim != 3:
-        raise ValueError(f"x_raw must be (N, C, T), got {x_raw.shape}")
-    N, C, _T = x_raw.shape
+    if x_raw is None:
+        if per_electrode_embeddings is None:
+            raise ValueError("give x_raw, per_electrode_embeddings, or both")
+        N, C = np.shape(per_electrode_embeddings)[:2]
+    else:
+        x_raw = np.asarray(x_raw)
+        if x_raw.ndim != 3:
+            raise ValueError(f"x_raw must be (N, C, T), got {x_raw.shape}")
+        N, C, _T = x_raw.shape
 
     xyz = np.asarray(xyz)
     if xyz.ndim != 2 or xyz.shape != (C, 3):
@@ -688,12 +726,6 @@ def popt_embeddings(
             cls_out = rep[:, 0, :]                                           # (b, 512)
             outs[start:stop] = cls_out.detach().cpu().numpy()
     return outs
-
-
-# --------------------------------------------------------------------------- #
-# Self-test
-# --------------------------------------------------------------------------- #
-
 
 
 # ==========================================================================
@@ -800,10 +832,11 @@ def _get_emb(x: torch.Tensor, power: torch.Tensor, et, ec) -> torch.Tensor:
     """Inlined official embedding fn (per the Brant model card / utils.py:get_emb,
     without importing utils.py). x (B,C,15,1500), power (B,C,15,8) -> (B,C,15,2048).
 
-    DIFFERENTIABLE. `get_emb` below is the no-grad wrapper the frozen arm uses; the
-    fine-tuning arm must call THIS one, or the trunk output carries grad_fn=None and every
-    LoRA / full-FT parameter silently receives grad=None -- i.e. `lora` and `full_ft`
-    degenerate into the frozen probe while still reporting themselves as adapted.
+    Differentiable. `get_emb` below is the no-grad wrapper the frozen arms use. A
+    caller that trains through Brant must call this one instead: through the
+    wrapper the trunk output has grad_fn=None, so every trainable parameter
+    would silently receive no gradient. (This release has no such caller; the
+    paper's Brant fine-tuning rows are not included.)
     """
     b, c, s, seg = x.shape
     tz = et(mask=None, data=x, power=power, need_mask=False)      # (B*C, 15, 2048)
@@ -813,15 +846,92 @@ def _get_emb(x: torch.Tensor, power: torch.Tensor, et, ec) -> torch.Tensor:
     return emb.reshape(b, s, c, d).transpose(1, 2)               # (B, C, 15, 2048)
 
 
-#: The frozen arm's entry point -- identical behaviour to the pre-2026-08-10 decorated
-#: function, so btb_brant_arm.py and every frozen artifact are unaffected. Kept as a wrapper
-#: rather than a second implementation so the two paths cannot drift apart.
-get_emb = torch.no_grad()(_get_emb)
+def get_emb(x, power, et, ec):
+    """`_get_emb` under torch.no_grad(): the frozen arms' entry point.
+
+    A wrapper rather than a second implementation, so the two cannot drift
+    apart. Written as a function rather than ``torch.no_grad()(_get_emb)`` so
+    that importing this module does not need torch.
+    """
+    with torch.no_grad():
+        return _get_emb(x, power, et, ec)
 
 
 # ===========================================================================
-# Continuous-stream loaders (stream + right-edge indices + targets), per subject
+# Brant input: the whole recording at 250 Hz, then 6 s patches cut from it
+#
+# This is how the paper's Brant rows were produced. The recording is resampled
+# ONCE, at the exact measured rate, and each patch is a slice of that stream
+# ending at the task window's right edge. Resampling each cut window on its own
+# (`brant_embeddings`, below) is not equivalent: the 250 Hz grid then starts at
+# each window's first native sample (up to ~2 ms off the stream's grid), the
+# integer-rounded rate is ~25 ppm off, and the anti-alias filter differs, which
+# moves the 110-128 Hz band power most. Measured on one BrainTreebank electrode,
+# the two patches differ by a median relative L2 of 0.03-0.05, depending on the
+# events sampled.
 # ===========================================================================
+
+
+def brant_resample_ratio(fs: float) -> Tuple[int, int]:
+    """(up, down) taking the MEASURED rate `fs` to 250 Hz, as the paper runs did.
+
+    BrainTreebank rates are not integers (e.g. 2049.948 Hz), so rounding fs to
+    an integer first (5/41 for that subject) resamples to ~250.006 Hz. The ratio
+    is instead built from the rate itself, with its denominator limited to 10000.
+    """
+    from fractions import Fraction
+    fr = Fraction(BRANT_FS, 1) / Fraction(float(fs)).limit_denominator(10000)
+    return fr.numerator, fr.denominator
+
+
+def brant_resample_fir(up: int, down: int) -> np.ndarray:
+    """The anti-alias FIR ``scipy.signal.resample_poly`` designs for (up, down).
+
+    Its own default, reproduced so that it can be designed once per recording
+    rather than once per channel: with exact ratios `down` reaches ~8e6, the
+    filter has ~1.6e8 taps, and designing it is most of the cost. Passing it as
+    ``window=`` gives resample_poly bit-identical output (it copies the array,
+    then scales it by `up`, exactly as it does its own design).
+    """
+    from scipy.signal import firwin
+    max_rate = max(up, down)
+    return firwin(2 * 10 * max_rate + 1, 1.0 / max_rate, window=("kaiser", 5.0))
+
+
+def brant_stream_at_250(read_channel, n_channels: int, n_samples: int,
+                        fs: float) -> np.ndarray:
+    """Resample a whole recording to Brant's 250 Hz, one channel at a time.
+
+    Args:
+        read_channel: callable, ``read_channel(i)`` -> the full 1-D signal of
+            channel i at `fs`. Called once per channel, so peak memory is one
+            native channel plus the (T250, C) float32 result.
+        n_channels, n_samples: C and the native length every channel has.
+        fs: MEASURED sampling rate.
+
+    Returns (T250, C) float32, T250 = ceil(n_samples * up / down).
+    """
+    from scipy.signal import resample_poly
+    up, down = brant_resample_ratio(fs)
+    n250 = int(np.ceil(n_samples * up / down))
+    fir = brant_resample_fir(up, down) if (up, down) != (1, 1) else None
+    out = np.empty((n250, int(n_channels)), dtype=np.float32)
+    for ci in range(int(n_channels)):
+        sig = np.asarray(read_channel(ci), dtype=np.float64)
+        if fir is None:
+            r = sig.astype(np.float32)
+        else:
+            r = resample_poly(sig, up, down, window=fir).astype(np.float32)
+        k = min(len(r), n250)
+        out[:k, ci] = r[:k]
+        out[k:, ci] = 0.0
+        del sig, r
+    return out
+
+
+def brant_right_edges_250(right_native, fs: float) -> np.ndarray:
+    """Native-rate right-edge sample indices -> 250 Hz stream indices."""
+    return np.round(np.asarray(right_native) * (BRANT_FS / float(fs))).astype(np.int64)
 
 
 def _context_patches(stream250: np.ndarray, end250: int, n_patches: int
@@ -851,20 +961,65 @@ def _context_patches(stream250: np.ndarray, end250: int, n_patches: int
     return np.ascontiguousarray(ctx.T).reshape(C, int(n_patches), BRANT_PATCH_LEN), padded
 
 
+def brant_stream_embeddings(stream250: np.ndarray, ends250, device: str = "cuda",
+                            batch_size: int = 16, n_patches: int = 1,
+                            brant_src: str = "", weights_dir: str = "",
+                            model=None) -> np.ndarray:
+    """Frozen Brant embeddings from a 250 Hz stream, (N, C, 2048).
+
+    Each anchor reads the L*1500 samples ending at ``ends250[i]`` (exclusive),
+    cut with `_context_patches`; for L=1 that is the one 6 s patch ending there.
+    The channel axis is kept, so per-electrode readouts are possible; patches are
+    averaged (a no-op for L=1). This is the paper's BrainTreebank Brant arm:
+    the same batching (16 anchors), the same 8-band power and the same encoders.
+
+    Args:
+        stream250: (T250, C) float32, from `brant_stream_at_250`.
+        ends250: (N,) right-edge indices into the stream, from
+            `brant_right_edges_250`.
+        model: optional (time_encoder, channel_encoder) from `load_brant`,
+            loaded with the same `n_patches`.
+    """
+    ends = np.asarray(ends250, dtype=np.int64)
+    C = stream250.shape[1]
+    et, ec = model if model is not None else load_brant(
+        brant_src or brant_src_dir(), weights_dir or brant_weights_dir(),
+        device, n_patches=n_patches)
+    embs = np.empty((len(ends), C, BRANT_D_MODEL), dtype=np.float32)
+    n_padded = 0
+    for b0 in range(0, len(ends), batch_size):
+        pats = []
+        for e in ends[b0:b0 + batch_size]:
+            p, was_padded = _context_patches(stream250, int(e), n_patches)
+            pats.append(p)
+            n_padded += int(was_padded)
+        # C-contiguous (B, C, L, 1500): Brant's pre_model.py calls .view() on it.
+        xb = np.stack(pats, axis=0).astype(np.float32)
+        pw = compute_power(xb, BRANT_FS).astype(np.float32)          # (B, C, L, 8)
+        z = get_emb(torch.from_numpy(xb).to(device), torch.from_numpy(pw).to(device),
+                    et, ec)                                          # (B, C, L, 2048)
+        embs[b0:b0 + len(pats)] = z.mean(dim=2).float().cpu().numpy()
+    if n_padded:
+        print(f"  [brant] {n_padded}/{len(ends)} anchors had under {n_patches * 6} s of "
+              f"history; their front was filled by tiling real signal", flush=True)
+    return embs
 
 
 def brant_embeddings(x_raw: np.ndarray, fs: float, device: str = "cuda",
                      brant_src: str = "", weights_dir: str = "",
                      batch_size: int = 8) -> np.ndarray:
-    """Frozen Brant embeddings, (N, C, 2048).
+    """Frozen Brant embeddings from pre-cut windows, (N, C, 2048).
 
-    Brant's atomic unit is a 1500-sample patch at 250 Hz, i.e. **6 seconds**. That
-    is longer than the 1.5 s window the other arms use, so windows handed to this
-    function must already carry Brant's native context -- the paper's arm reads
-    [t-4.5, t+1.5] for exactly this reason, giving one full patch and a 6.11 s
-    footprint once the resampler's filter edge is counted. Passing a shorter
-    window would zero-pad the patch and quietly measure something else, so it
-    raises instead.
+    Brant's atomic unit is a 1500-sample patch at 250 Hz, i.e. **6 seconds**, so
+    windows handed to this function must already carry at least 6 s; the patch
+    used is the last 6 s of each window. Passing a shorter window would zero-pad
+    the patch and quietly measure something else, so it raises instead.
+
+    This resamples each window on its own, with integer-rounded rate factors. It
+    is a convenience for callers that only have cut windows, and it only
+    approximates the paper's BrainTreebank Brant arm, which resampled the whole
+    recording once: use `brant_stream_at_250` + `brant_stream_embeddings` to
+    reproduce that (experiments/run_ieeg_fm_baselines.py does).
 
     Args:
         x_raw: (N, C, T) raw windows at `fs` Hz, T >= 6 s worth.
@@ -885,8 +1040,8 @@ def brant_embeddings(x_raw: np.ndarray, fs: float, device: str = "cuda",
             f"windows are {s250.shape[-1]} samples at {BRANT_FS} Hz "
             f"({s250.shape[-1] / BRANT_FS:.2f} s) but Brant's patch is "
             f"{BRANT_PATCH_LEN} ({BRANT_PATCH_LEN / BRANT_FS:.1f} s). Give it its "
-            f"native context -- the paper's arm uses [t-4.5, t+1.5].")
-    s250 = s250[..., -BRANT_PATCH_LEN:]                    # the patch ending at t+1.5
+            f"native context: 6 s ending where the task window ends.")
+    s250 = s250[..., -BRANT_PATCH_LEN:]                    # the 6 s ending at the window end
 
     et, ec = load_brant(brant_src or brant_src_dir(), weights_dir or brant_weights_dir(),
                         device, n_patches=1)
