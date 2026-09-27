@@ -18,11 +18,35 @@
     "pinky"
   ],
   "models": [
-    "CORTEG (pooled) \u2b50",
-    "Random init (no pretrain)",
-    "CORTEG (per-subject)",
-    "HiLoFuseNet",
-    "Ridge",
-    "PLS"
-  ]
+    "CORTEG pooled \u2b50",
+    "CORTEG per-subject",
+    "Random init, full FT, seed 7",
+    "HiLoFuseNet re-run (not a paper value)",
+    "Ridge_HGA",
+    "Ridge_LFS"
+  ],
+  "notes": {
+    "CORTEG pooled \u2b50": "Table 1, pooled CORTEG. The exact cohort mean 0.553487 rounds to 0.553; the paper's 0.554 comes from an intermediate rounded value.",
+    "CORTEG per-subject": "Table 1, per-subject CORTEG.",
+    "Random init, full FT, seed 7": "Table 2 random-init row (full fine-tuning). The paper's 0.510 is the mean of seeds 7 (shown, 0.511) and 123 (0.509). A seed-42 run of the same configuration scored 0.554 and is not in that mean; the mean of all three seeds is 0.525.",
+    "HiLoFuseNet re-run (not a paper value)": "Not a paper value: Table 1's 0.534 is transcribed from Sun et al. This is our seed-42 re-run of the architecture.",
+    "Ridge_HGA": "Table 1, recomputed: ridge on per-channel mean and std of the z-scored high-gamma stream.",
+    "Ridge_LFS": "Table 1, recomputed: ridge on per-channel mean and std of the z-scored low-frequency stream."
+  },
+  "paper_r": {
+    "CORTEG pooled \u2b50": 0.554,
+    "CORTEG per-subject": 0.539,
+    "Random init, full FT, seed 7": 0.51,
+    "HiLoFuseNet re-run (not a paper value)": null,
+    "Ridge_HGA": 0.336,
+    "Ridge_LFS": 0.181
+  },
+  "cohort_mean_r": {
+    "CORTEG pooled \u2b50": 0.553487,
+    "CORTEG per-subject": 0.539442,
+    "Random init, full FT, seed 7": 0.51141,
+    "HiLoFuseNet re-run (not a paper value)": 0.52871,
+    "Ridge_HGA": 0.335569,
+    "Ridge_LFS": 0.181312
+  }
 }

@@ -278,7 +278,7 @@
         <div class="card">
           <h3>
             Model Prediction
-            <span class="badge badge-pred" id="pred-badge">CORTEG</span>
+            <span class="badge badge-pred" id="pred-badge">CORTEG pooled ⭐</span>
           </h3>
           <div class="canvas-wrap">
             <canvas id="canvas-pred"></canvas>
@@ -827,6 +827,10 @@
         });
         state.subject = state.manifest.subjects[0];
         state.model = state.manifest.models[0];
+        // A dataset switch resets the model; keep the badge naming it.
+        document.getElementById("pred-badge").textContent = (
+          state.model.split("(")[0] || "model"
+        ).trim();
       }
 
       async function init() {
@@ -962,11 +966,12 @@
             state.data.models[mname].y_pred,
           );
         }
-        // Some exported baselines (e.g. Ridge/PLS) were saved on a raw,
-        // unstandardized scale, so their predictions land far off the z-scored
-        // [-3, 3] axis and appear absent. Rescale each model's prediction per
-        // channel to the ground-truth channel's mean/std (correlation is
-        // affine-invariant, so the reported r values are unchanged).
+        // Each run z-scores its target with its own statistics, and a model's
+        // predictions can sit on a narrower or offset scale than the target, so
+        // traces would not share the [-3, 3] axis. Rescale each model's
+        // prediction per channel to the ground-truth channel's mean/std
+        // (correlation is affine-invariant, so the reported r values are
+        // unchanged).
         standardizePreds(state.data);
         state.T = state.data.y_true.length;
         document.getElementById("timeSlider").max = state.T - 1;
@@ -1151,6 +1156,24 @@
         color: #57606a;
       "
     >
+      <p style="margin: 0 0 8px">
+        r is the Pearson correlation on each subject's held-out test split; for
+        the CORTEG and Ridge rows it matches the paper's per-subject tables.
+        CORTEG rows are Table 1; "Random init, full FT" is Table 2's
+        random-init row. On Stanford the paper's 0.510 is the mean of seeds 7
+        and 123, and seed 7 is shown; a seed-42 run of the same configuration
+        (r = 0.554) is not in that mean, and the mean of all three seeds is
+        0.525. Ridge_HGA and Ridge_LFS are Table 1, recomputed with the paper's
+        recipe because those runs saved no predictions. The HiLoFuseNet re-run
+        is ours (seed 42, predictions saved) and not a paper value. On
+        Stanford, Table 1's 0.534 is transcribed from Sun et al. On Ghent,
+        Table 1's 0.259 comes from the original runner, which saved no
+        predictions; the re-run drops that runner's gradient clipping,
+        early-stopping min_delta and cuDNN deterministic mode, so it is not a
+        reproduction of 0.259.
+        Traces are downsampled to 1,000 points and play back faster than real
+        time.
+      </p>
       Stanford finger movement (n=9) • Ghent speech envelope (n=16) • Hand:
       real rigged mesh (immersive-web generic hand, Apache-2.0) with a bind-pose-derived finger rig • Drag the
       hand to rotate

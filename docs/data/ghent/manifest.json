@@ -18,11 +18,27 @@
     "2021_008-1"
   ],
   "models": [
-    "CORTEG (pooled) \u2b50",
-    "Random init (no pretrain)",
-    "CORTEG (per-subject)",
-    "HiLoFuseNet",
-    "Ridge",
-    "PLS"
-  ]
+    "CORTEG pooled \u2b50",
+    "CORTEG per-subject",
+    "Random init, full FT",
+    "HiLoFuseNet re-run (not a paper value)"
+  ],
+  "notes": {
+    "CORTEG pooled \u2b50": "Table 1, pooled CORTEG.",
+    "CORTEG per-subject": "Table 1, per-subject CORTEG.",
+    "Random init, full FT": "Table 2 random-init row (full fine-tuning), seed 42.",
+    "HiLoFuseNet re-run (not a paper value)": "Not a paper value: a seed-42 re-implementation with predictions saved, with the same data, model, optimiser and schedule as Table 1's runner but without its gradient clipping, early-stopping min_delta or cuDNN deterministic mode. Table 1's 0.259 comes from that runner, which saved no predictions; the re-run is not a reproduction of it."
+  },
+  "paper_r": {
+    "CORTEG pooled \u2b50": 0.339,
+    "CORTEG per-subject": 0.25,
+    "Random init, full FT": 0.156,
+    "HiLoFuseNet re-run (not a paper value)": null
+  },
+  "cohort_mean_r": {
+    "CORTEG pooled \u2b50": 0.338972,
+    "CORTEG per-subject": 0.249648,
+    "Random init, full FT": 0.156408,
+    "HiLoFuseNet re-run (not a paper value)": 0.248933
+  }
 }
