@@ -253,6 +253,28 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
     # omits it: its gradients are computed and discarded and it stays at its random
     # initialisation for the whole run. Nothing errors and the loss still falls,
     # because the backbone can steer the pooled feature to suit a fixed projection.
+    #
+    # --freeze_readout skips this and keeps the lazy construction, which is how
+    # the Stanford runs behind the paper were trained (the Table 1 pooled run and
+    # the LOO-FT Stage-1 runs): their readout never left its initialisation.
+    # Keeping the head lazy, rather than building it here with requires_grad=False,
+    # is what makes the flag reproduce those runs and not just resemble them:
+    #  - the head is drawn at the same point of the CPU RNG stream, so on a CUDA
+    #    run with --seed 42 its initial values are bit-identical to the readout in
+    #    checkpoints/corteg_stanford_pooled.pt, with the tested versions (torch
+    #    2.11, timm 1.0.26). That position depends on how many values the backbone's
+    #    construction draws first, so other torch/timm versions can give other
+    #    values without anything being wrong. Building the head here draws it
+    #    earlier and gives different values; on a CPU-only run, dropout in the
+    #    first forward also draws from that stream, so the values differ there;
+    #  - it keeps requires_grad=True, so it is saved in trainable_weights.pt
+    #    exactly as in the released checkpoint. The startup count "TOTAL TRAINABLE
+    #    PARAMS" does not see it yet (294,671 for the Table 1 model), while the
+    #    saved file holds all 297,236;
+    #  - its gradient, which optimizer.zero_grad() never clears because the head
+    #    is not in the optimizer, still enters the clip_grad_norm_ total.
+    if getattr(args, "freeze_readout", False):
+        return model
     _embed = getattr(backbone, "embed_dim", None)
     if _embed is not None and getattr(model.head, "token_mode", "") in ("cls", "mean"):
         model.head.materialize_head(embed_dim=int(_embed))
@@ -405,6 +427,20 @@ def main():
     p.add_argument("--head_dropout", type=float, default=0.0)
     p.add_argument("--head_hidden", type=int, default=0,
                     help="Hidden dim for 2-layer MLP head (0 = single linear)")
+    p.add_argument("--freeze_readout", action="store_true",
+                    help="Leave the linear readout at its random initialisation, as in "
+                         "the paper's Stanford runs (Table 1 pooled, LOO-FT Stage 1): the "
+                         "head is built on the first forward, after the optimizer, so it "
+                         "is never updated. Without it the readout is trained, which the "
+                         "paper's method section describes. pooled/per_subject only; in "
+                         "finetune mode drop 'head' from --finetune_modules instead.")
+    p.add_argument("--train_readout", action="store_true",
+                    help="Cancel --freeze_readout (in either order), so pooled/"
+                         "per_subject training trains the readout. The Table 1 scripts "
+                         "pass --freeze_readout and forward their extra arguments after "
+                         "it, so this is how to get the corrected behaviour from them "
+                         "without editing them. In finetune mode --finetune_modules "
+                         "decides, and the flag only cancels --freeze_readout.")
 
     # Input regularization
 
@@ -497,6 +533,15 @@ def main():
                     help="Save best model state_dict to this path after training")
 
     args = p.parse_args()
+    if args.train_readout:
+        # A store_true flag cannot be switched off again on the command line, and
+        # the scripts pass --freeze_readout before "$@"; this is the off switch.
+        args.freeze_readout = False
+    if args.freeze_readout and args.train_mode == "finetune":
+        # Stage 2 builds the head from the Stage-1 checkpoint before its optimizer
+        # (in the paper runs too), so the flag would silently do nothing here.
+        p.error("--freeze_readout applies to pooled/per_subject training; in finetune "
+                "mode leave 'head' out of --finetune_modules to keep the readout fixed")
     os.makedirs(args.save_root, exist_ok=True)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

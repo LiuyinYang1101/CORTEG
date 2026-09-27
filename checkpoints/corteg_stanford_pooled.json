@@ -9,8 +9,8 @@
     "row": "CORTEG (pooled)",
     "metric": "Pearson r",
     "value": 0.554,
-    "value_full": 0.5535,
-    "verified": "Reproduced from this checkpoint on all 9 Stanford subjects: cohort mean 0.5537 (published 0.5535), max per-subject deviation 0.0016."
+    "value_full": 0.553487,
+    "verified": "Reproduced from this checkpoint on all 9 Stanford subjects: cohort mean 0.5537 against 0.554 in the paper (Table 1; the per-subject values in App. Table 7 average to 0.5536). value_full is the run's own unrounded cohort mean, not a figure the paper prints. Largest per-subject deviation from the run's unrounded per-subject values: 0.0016. These figures fit the input z-score statistics on each subject's whole training split; the runner fits them on its first 90% (the last 10% is validation), and with that split subject bp gives 0.5783, the run's own value to 1e-4 (notebooks/quickstart.ipynb, section 3)."
   },
   "contents": "KNNSoftFourier spatial adapter (142,095), LoRA A/B on blocks 4-7 (131,072), the warm-started high-gamma patch embed (13,312), LayerNorms (8,192) and the readout (2,565). The frozen ST-EEGFormer Small backbone is NOT included; see README.md.",
   "architecture_args": {
@@ -29,7 +29,7 @@
     "hi_inject_last_n": 4,
     "use_ecog_fuser": true
   },
-  "note": "build_args is the exact argparse namespace the released run used, with local paths cleared. load_corteg() rebuilds from it so the architecture cannot drift from the weights.",
+  "note": "build_args is the exact argparse namespace the released run used, with local paths cleared, except that the run predates --freeze_readout: its readout was built lazily and never trained, which that flag now reproduces (see readout_note). A training command rebuilt from build_args alone trains the readout. load_corteg() rebuilds from it so the architecture cannot drift from the weights.",
   "build_args": {
     "dataset": "Stanford",
     "data_root": "",
@@ -80,5 +80,6 @@
     "finetune_token_mode": "",
     "save_root": "",
     "save_ckpt_path": ""
-  }
+  },
+  "readout_note": "This checkpoint's readout (head.head, 2,565 parameters) is at its random initialisation. The paper run built it lazily on the first forward pass, after the optimizer, so it was never updated. scripts/table1_corteg_pooled_stanford.sh reproduces that with --freeze_readout, which with --seed 42 on a GPU, with the tested versions (torch 2.11, timm 1.0.26), draws initial values bit-identical to this file's readout; other versions may draw other values. The training log of such a run counts 294,671 trainable parameters, because the lazily built readout does not exist yet when it counts; the saved weights hold all 297,236, as this file does. The reported number stands: a random 512->5 projection has full rank, so the adapted backbone can still produce any output it needs, and 0.554 reproduces from this file. A ridge readout refit on this checkpoint's own features scores 0.5643 against its 0.5537; an end-to-end retrain with a trained readout has not been run. Without --freeze_readout, or with --train_readout, the training code trains the readout."
 }

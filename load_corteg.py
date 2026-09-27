@@ -34,7 +34,8 @@ def verify_checkpoint(checkpoint: str = DEFAULT_CKPT,
 
     with open(manifest, encoding="utf-8") as fh:
         man = json.load(fh)
-    blob = open(checkpoint, "rb").read()
+    with open(checkpoint, "rb") as fh:
+        blob = fh.read()
     if len(blob) != man["bytes"]:
         raise ValueError(f"{checkpoint}: {len(blob)} bytes, manifest says {man['bytes']}")
     got = hashlib.sha256(blob).hexdigest()

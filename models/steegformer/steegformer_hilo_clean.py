@@ -395,7 +395,8 @@ class LayerwiseHiLoGate(nn.Module):
     begins exactly as the lo-only baseline then learns where to open hi
     (Flamingo-style); tanh also lets it suppress hi (negative g). GMU-style
     input-dependent gate, generalised from LearnedRouter to one scalar/layer.
-    Params (D=512, bottleneck=16, depth=12): ~16.6K, no extra block params.
+    Params (D=512, bottleneck=16, depth=8, i.e. CORTEG-S): 18,584 including the
+    2,048-param input LayerNorm (16,536 without it); no extra block params.
     """
 
     def __init__(
