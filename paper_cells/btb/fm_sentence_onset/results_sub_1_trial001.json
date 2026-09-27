@@ -1,0 +1,112 @@
+{
+  "config": {
+    "root": "<BTB_DATA_ROOT>",
+    "out_root": "<OUTPUT_ROOT>/btb_rebench/fm_sentence_onset",
+    "subj": "sub_1",
+    "trial": "trial001",
+    "movie": "the-martian",
+    "endpoint": "sentence_onset",
+    "fs": 2037.9600020442626,
+    "win_sec": 1.5,
+    "pre_sec": 0.0,
+    "guard": 0.5,
+    "max_per_class": 900,
+    "train_frac": 0.8,
+    "reref": "laplacian_xyz",
+    "batch_size": 256,
+    "device": "cuda",
+    "seed": 42,
+    "n_folds": 4,
+    "skip_popt": false,
+    "event_chunk": 200,
+    "no_cache": true,
+    "tag": "sub_1_trial001",
+    "_win_explicit": false
+  },
+  "n_events": 1800,
+  "splits": [
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 359,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        127.031,
+        1992.1475867570805
+      ],
+      "test_time_range": [
+        2002.462875947348,
+        3498.4318491776976
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 716,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        127.031,
+        3491.061
+      ],
+      "test_time_range": [
+        3499.08,
+        5258.532595532509
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1080,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        127.031,
+        5258.532595532509
+      ],
+      "test_time_range": [
+        5266.961,
+        7212.47
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1435,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        127.031,
+        7201.143099321902
+      ],
+      "test_time_range": [
+        7212.561,
+        8693.061029118468
+      ],
+      "causal": true
+    }
+  ],
+  "n_pos": 900,
+  "cv_folds": 5,
+  "arms": {
+    "BrainBERT_single_elec_mean": 0.5135575754672205,
+    "BrainBERT_single_elec_max": 0.5772360046303507,
+    "BrainBERT_pop_meanpool": 0.5542241974836144,
+    "rawHGA_perchannel": 0.5712005147167601,
+    "rawBandpower_perchannel": 0.5683653434743782,
+    "rawHGA_popmean_legacy": 0.5357421599641439,
+    "PopT_population": 0.569933928834273
+  }
+}

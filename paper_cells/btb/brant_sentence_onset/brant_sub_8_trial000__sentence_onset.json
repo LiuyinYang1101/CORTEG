@@ -1,0 +1,118 @@
+{
+  "config": {
+    "root": "<BTB_DATA_ROOT>",
+    "out_root": "<OUTPUT_ROOT>/btb_rebench/brant_sentence_onset",
+    "subj": "sub_8",
+    "trial": "trial000",
+    "movie": "sesame-street-episode-3990",
+    "fs": 2047.9520479497703,
+    "win_sec": 1.5,
+    "pre_sec": 0.0,
+    "n_patches": 1,
+    "max_per_class": 900,
+    "batch_size": 16,
+    "device": "cuda",
+    "seed": 42,
+    "n_folds": 4,
+    "endpoint": "sentence_onset",
+    "neg_mode": "upstream",
+    "max_silence_sec": 10.0,
+    "brant_src": "<BRANT_SRC>",
+    "weights_dir": "<BRANT_WEIGHTS>",
+    "tag": "sub_8_trial000",
+    "_win_explicit": false
+  },
+  "n_events": 1716,
+  "n_pos": 858,
+  "n_folds": 4,
+  "splits": [
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1716,
+      "n_train": 337,
+      "n_test": 343,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.87754287993618,
+        680.0072668550666
+      ],
+      "test_time_range": [
+        689.9249091643112,
+        1289.641
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1716,
+      "n_train": 680,
+      "n_test": 344,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.87754287993618,
+        1280.081
+      ],
+      "test_time_range": [
+        1290.35,
+        2136.633831247477
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1716,
+      "n_train": 1028,
+      "n_test": 343,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.87754287993618,
+        2128.9328582963253
+      ],
+      "test_time_range": [
+        2138.3083851433184,
+        2815.332256762212
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1716,
+      "n_train": 1370,
+      "n_test": 343,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.87754287993618,
+        2800.757367783608
+      ],
+      "test_time_range": [
+        2816.331,
+        3335.6832867969683
+      ],
+      "causal": true
+    }
+  ],
+  "fs_measured": 2047.9520479497703,
+  "footprint_sec": 6.11,
+  "endpoint": "sentence_onset",
+  "wnw_meta": null,
+  "arms": {
+    "Brant_population": 0.529551293214543,
+    "Brant_single_elec_mean": 0.5276709829450563,
+    "Brant_single_elec_max": 0.5960748784661333
+  },
+  "readout_note": "Brant_population is the historical channel-mean-pooled row; single_elec_{mean,max} mirror btb_fm_positive_control.py:465-468 so Brant is read out the same way BrainBERT is",
+  "fold_auroc": [
+    0.5518800082186153,
+    0.4942610462163535,
+    0.5571438295555101,
+    0.5149202888676931
+  ]
+}

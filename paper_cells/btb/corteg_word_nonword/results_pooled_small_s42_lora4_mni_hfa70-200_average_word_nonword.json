@@ -1,0 +1,1107 @@
+{
+  "regime": "pooled",
+  "variant": "small",
+  "full_finetune": false,
+  "lora_last_n": 4,
+  "subject_cond": "none",
+  "num_prompt_tokens": 4,
+  "seed": 42,
+  "per_subject_auroc": {
+    "sub_1": 0.9071026721370314,
+    "sub_2": 0.8085561076904921,
+    "sub_3": 0.9101129917310762,
+    "sub_4": 0.808419913555757,
+    "sub_6": 0.8848966304381978,
+    "sub_7": 0.5403678187763467,
+    "sub_10": 0.6501912072774036,
+    "sub_5": 0.6426522030563013,
+    "sub_8": 0.8112655214036102,
+    "sub_9": 0.5942714153634043
+  },
+  "mean_auroc": 0.7557836481429621,
+  "auroc_folds": [
+    0.6850991756945491,
+    0.7580968793687646,
+    0.7689694256730184,
+    0.810969111835516
+  ],
+  "per_subject_per_fold": {
+    "sub_1": [
+      0.8773484579936192,
+      0.9406099518459068,
+      0.8883618551587302,
+      0.9220904235498695
+    ],
+    "sub_2": [
+      0.5669286287089014,
+      0.8649553571428572,
+      0.908342686120464,
+      0.8939977587897464
+    ],
+    "sub_3": [
+      0.8521194158871291,
+      0.9116285011657245,
+      0.9014328063241107,
+      0.9752712435473401
+    ],
+    "sub_4": [
+      0.618102675713737,
+      0.8954752838667626,
+      0.8353285945878539,
+      0.8847731000546747
+    ],
+    "sub_6": [
+      0.8586984126984126,
+      0.9421063507370161,
+      0.8078529657477027,
+      0.9309287925696594
+    ],
+    "sub_7": [
+      0.5098468946783553,
+      0.49809406900116293,
+      0.5334876543209877,
+      0.6200426571048807
+    ],
+    "sub_10": [
+      0.6017742882754783,
+      0.6284406606068366,
+      0.6017853114627308,
+      0.7687645687645688
+    ],
+    "sub_5": [
+      0.6924962292609351,
+      0.5502410085279941,
+      0.6459537115973604,
+      0.6819178628389155
+    ],
+    "sub_8": [
+      0.7426948051948052,
+      0.7278153450946319,
+      0.9536918812867865,
+      0.8208600540382174
+    ],
+    "sub_9": [
+      0.5309819485341185,
+      0.6216022656987532,
+      0.6134567901234568,
+      0.6110446570972887
+    ]
+  },
+  "n_per_subject": {
+    "sub_1": 1800,
+    "sub_2": 1800,
+    "sub_3": 1800,
+    "sub_4": 1800,
+    "sub_6": 1800,
+    "sub_7": 1800,
+    "sub_10": 1800,
+    "sub_5": 1800,
+    "sub_8": 1800,
+    "sub_9": 1800
+  },
+  "subjects": [
+    "sub_1",
+    "sub_2",
+    "sub_3",
+    "sub_4",
+    "sub_6",
+    "sub_7",
+    "sub_10",
+    "sub_5",
+    "sub_8",
+    "sub_9"
+  ],
+  "trials": [
+    "trial001",
+    "trial006",
+    "trial000",
+    "trial000",
+    "trial004",
+    "trial000",
+    "trial000",
+    "trial000",
+    "trial000",
+    "trial000"
+  ],
+  "splits": [
+    {
+      "sid": 0,
+      "fold": 0,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 303,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.877377377,
+        1461.877377377
+      ],
+      "test_time_range": [
+        1728.877377377,
+        3434.877377377
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 0,
+      "fold": 1,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 609,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.877377377,
+        2846.877377377
+      ],
+      "test_time_range": [
+        3438.877377377,
+        5250.24346908656
+      ],
+      "n_val": 107,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 0,
+      "fold": 2,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 914,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.877377377,
+        4495.877377377
+      ],
+      "test_time_range": [
+        5257.63,
+        7096.877377377
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 0,
+      "fold": 3,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1220,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.877377377,
+        5922.491
+      ],
+      "test_time_range": [
+        7101.877377377,
+        8745.877377377
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 1,
+      "fold": 0,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 301,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        10.5,
+        1384.3
+      ],
+      "test_time_range": [
+        1618.2875957446806,
+        3019.061702127659
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 1,
+      "fold": 1,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 610,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        10.5,
+        2668.116319148937
+      ],
+      "test_time_range": [
+        3046.5,
+        4526.74988178914
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 1,
+      "fold": 2,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 916,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        10.5,
+        3698.5
+      ],
+      "test_time_range": [
+        4534.691,
+        6117.5
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 1,
+      "fold": 3,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1222,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        10.5,
+        5109.921
+      ],
+      "test_time_range": [
+        6128.5,
+        7894.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 2,
+      "fold": 0,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 303,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        910.9529488817892
+      ],
+      "test_time_range": [
+        1074.5,
+        2269.619999999999
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 2,
+      "fold": 1,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 610,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1902.306709265176
+      ],
+      "test_time_range": [
+        2271.4009999999994,
+        3512.5
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 2,
+      "fold": 2,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 912,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2916.5709999999995
+      ],
+      "test_time_range": [
+        3520.94498402556,
+        4748.230999999999
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 2,
+      "fold": 3,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1220,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        4071.5
+      ],
+      "test_time_range": [
+        4750.5,
+        5905.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 3,
+      "fold": 0,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 299,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        835.5
+      ],
+      "test_time_range": [
+        1017.191,
+        1984.673194888179
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 3,
+      "fold": 1,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 609,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1663.461
+      ],
+      "test_time_range": [
+        1991.041,
+        3009.5
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 3,
+      "fold": 2,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 913,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2531.221
+      ],
+      "test_time_range": [
+        3010.5,
+        3961.5
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 3,
+      "fold": 3,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1219,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        3437.29
+      ],
+      "test_time_range": [
+        3963.936102236422,
+        4949.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 4,
+      "fold": 0,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 299,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        484.5
+      ],
+      "test_time_range": [
+        564.5,
+        1177.5
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 4,
+      "fold": 1,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 607,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        977.5
+      ],
+      "test_time_range": [
+        1180.62,
+        1760.4736170212768
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 4,
+      "fold": 2,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 911,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1486.2021276595744
+      ],
+      "test_time_range": [
+        1760.78085106383,
+        2437.5
+      ],
+      "n_val": 161,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 4,
+      "fold": 3,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1219,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2025.7854680851065
+      ],
+      "test_time_range": [
+        2438.5,
+        3023.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 5,
+      "fold": 0,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 303,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        910.9529488817892
+      ],
+      "test_time_range": [
+        1074.5,
+        2262.798446601941
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 5,
+      "fold": 1,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 609,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1899.318466453674
+      ],
+      "test_time_range": [
+        2269.619999999999,
+        3540.5162715654947
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 5,
+      "fold": 2,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 911,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2916.5709999999995
+      ],
+      "test_time_range": [
+        3541.6510000000003,
+        4751.5
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 5,
+      "fold": 3,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1218,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        4071.5
+      ],
+      "test_time_range": [
+        4755.571884984026,
+        5901.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 6,
+      "fold": 0,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 303,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        633.541
+      ],
+      "test_time_range": [
+        826.7258562300318,
+        1771.311
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 6,
+      "fold": 1,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 606,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1454.5
+      ],
+      "test_time_range": [
+        1774.99,
+        2711.811501597444
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 6,
+      "fold": 2,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 912,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2282.624595469256
+      ],
+      "test_time_range": [
+        2713.5,
+        3821.5
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 6,
+      "fold": 3,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1219,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        3125.5
+      ],
+      "test_time_range": [
+        3822.5,
+        4799.211
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 7,
+      "fold": 0,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 302,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        754.5
+      ],
+      "test_time_range": [
+        895.2450255591056,
+        1828.5
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 7,
+      "fold": 1,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 607,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1500.511
+      ],
+      "test_time_range": [
+        1830.5,
+        2770.208635782749
+      ],
+      "n_val": 107,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 7,
+      "fold": 2,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 914,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2356.5
+      ],
+      "test_time_range": [
+        2774.61,
+        3819.80124600639
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 7,
+      "fold": 3,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1221,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        3154.491
+      ],
+      "test_time_range": [
+        3822.5,
+        4865.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 8,
+      "fold": 0,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 300,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        522.071
+      ],
+      "test_time_range": [
+        662.5,
+        1294.031
+      ],
+      "n_val": 53,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 8,
+      "fold": 1,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 604,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        1102.5272507065
+      ],
+      "test_time_range": [
+        1294.8126148566814,
+        1953.5
+      ],
+      "n_val": 107,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 8,
+      "fold": 2,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 909,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        1650.5
+      ],
+      "test_time_range": [
+        1954.5,
+        2678.5
+      ],
+      "n_val": 161,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 8,
+      "fold": 3,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1219,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        2238.5
+      ],
+      "test_time_range": [
+        2679.5179652805814,
+        3389.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 9,
+      "fold": 0,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 302,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        1051.370607028754
+      ],
+      "test_time_range": [
+        1242.67,
+        2488.4
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 9,
+      "fold": 1,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 611,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        2136.51
+      ],
+      "test_time_range": [
+        2503.9009999999985,
+        3876.390999999999
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 9,
+      "fold": 2,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 914,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        3226.5
+      ],
+      "test_time_range": [
+        3881.5,
+        5256.617805111821
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    },
+    {
+      "sid": 9,
+      "fold": 3,
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1221,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        4422.5
+      ],
+      "test_time_range": [
+        5259.199999999999,
+        6459.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true
+    }
+  ],
+  "folds": 4,
+  "n_folds_run": 4,
+  "early_stop_on": "val",
+  "select_metric": "pooled",
+  "merge_strategy": "average",
+  "arm": "none",
+  "endpoint": "word_nonword",
+  "embargo_sec": 7.0,
+  "config": {
+    "root": "<BTB_DATA_ROOT>",
+    "variant": "small",
+    "lora_last_n": 4,
+    "lora_r": 4,
+    "lora_alpha": 16,
+    "lora_dropout": 0.2,
+    "full_finetune": false,
+    "hi_patch_size": 25,
+    "hi_inject_last_n": 4,
+    "merge_strategy": "average",
+    "select_metric": "pooled",
+    "subject_cond": "none",
+    "num_prompt_tokens": 4,
+    "M_EEG": 145,
+    "fuser_hidden": 128,
+    "use_ecog_fuser": true,
+    "epochs": 60,
+    "patience": 15,
+    "batch_size": 16,
+    "eval_batch_size": 32,
+    "subjects": null,
+    "endpoint": "word_nonword",
+    "neg_mode": "upstream",
+    "pre_sec": 0.0,
+    "win_sec": 1.5,
+    "all_subjects": true,
+    "contiguous_stratified": false,
+    "contiguous_folds": false,
+    "shuffle_coords": false,
+    "coords_source": "mni",
+    "hga_low": 70.0,
+    "hga_high": 200.0,
+    "lr": 0.0003,
+    "wd": 0.005,
+    "accum_iter": 4,
+    "max_norm": 1.0,
+    "use_amp": true,
+    "folds": 4,
+    "eval_every": 2,
+    "max_folds": 0,
+    "per_subject_lora": true,
+    "pretrain_control": "none",
+    "random_backbone": false,
+    "psl_init_std": 0.0,
+    "loss": "bce",
+    "seed": 42,
+    "device": "cuda",
+    "save_root": "<OUTPUT_ROOT>/btb_rebench/corteg_word_nonword",
+    "no_cache": false
+  }
+}

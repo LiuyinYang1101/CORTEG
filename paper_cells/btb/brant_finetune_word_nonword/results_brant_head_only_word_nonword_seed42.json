@@ -1,0 +1,1152 @@
+{
+  "arm": "Brant_head_only",
+  "endpoint": "word_nonword",
+  "folds": 4,
+  "n_subjects": 10,
+  "complete": true,
+  "val_frac": 0.15,
+  "embargo_sec": 7.0,
+  "loss": "bce",
+  "n_patches": 1,
+  "seed": 42,
+  "mean_auroc": 0.5422729064183553,
+  "per_subject": {
+    "sub_1": {
+      "C": 91,
+      "n": 1800,
+      "per_fold": [
+        0.5131803680190777,
+        0.5734195579701198,
+        0.5842323908730159,
+        0.5094553471618433
+      ],
+      "mean_auroc": 0.5450719160060141
+    },
+    "sub_2": {
+      "C": 72,
+      "n": 1800,
+      "per_fold": [
+        0.5063993584603048,
+        0.5576746323529412,
+        0.6302687367502182,
+        0.6199047485642247
+      ],
+      "mean_auroc": 0.5785618690319223
+    },
+    "sub_3": {
+      "C": 91,
+      "n": 1800,
+      "per_fold": [
+        0.528588188076935,
+        0.5390757241863882,
+        0.539355854743083,
+        0.5970758245494729
+      ],
+      "mean_auroc": 0.5510238978889698
+    },
+    "sub_4": {
+      "C": 152,
+      "n": 1800,
+      "per_fold": [
+        0.5920496735373192,
+        0.5172206785358993,
+        0.5252681132310763,
+        0.5640035538545654
+      ],
+      "mean_auroc": 0.549635504789715
+    },
+    "sub_6": {
+      "C": 135,
+      "n": 1800,
+      "per_fold": [
+        0.5286825396825396,
+        0.49250929880148775,
+        0.5189207586868405,
+        0.5644582043343653
+      ],
+      "mean_auroc": 0.5261427003763084
+    },
+    "sub_7": {
+      "C": 191,
+      "n": 1800,
+      "per_fold": [
+        0.5797011976787257,
+        0.5304302881509239,
+        0.5226697530864197,
+        0.5530277271181726
+      ],
+      "mean_auroc": 0.5464572415085605
+    },
+    "sub_10": {
+      "C": 159,
+      "n": 1800,
+      "per_fold": [
+        0.48004698463726003,
+        0.4825246447317885,
+        0.5356417775772614,
+        0.5285003885003885
+      ],
+      "mean_auroc": 0.5066784488616746
+    },
+    "sub_5": {
+      "C": 109,
+      "n": 1800,
+      "per_fold": [
+        0.538697209653092,
+        0.560437523173897,
+        0.5872722680054308,
+        0.474182615629984
+      ],
+      "mean_auroc": 0.5401474041156009
+    },
+    "sub_8": {
+      "C": 121,
+      "n": 1800,
+      "per_fold": [
+        0.4295941558441559,
+        0.5685844886857315,
+        0.5692286132477967,
+        0.5988964484520981
+      ],
+      "mean_auroc": 0.5415759265574456
+    },
+    "sub_9": {
+      "C": 66,
+      "n": 1800,
+      "per_fold": [
+        0.5358628856740494,
+        0.5188808229434552,
+        0.539537037037037,
+        0.5554558745348219
+      ],
+      "mean_auroc": 0.5374341550473409
+    }
+  },
+  "model": {
+    "sub_1": {
+      "mode": "head_only",
+      "n_patches": 1,
+      "total_params": 505663417,
+      "trainable_params": 6145,
+      "trainable_pct": 0.0012
+    },
+    "sub_2": {
+      "mode": "head_only",
+      "n_patches": 1,
+      "total_params": 505663417,
+      "trainable_params": 6145,
+      "trainable_pct": 0.0012
+    },
+    "sub_3": {
+      "mode": "head_only",
+      "n_patches": 1,
+      "total_params": 505663417,
+      "trainable_params": 6145,
+      "trainable_pct": 0.0012
+    },
+    "sub_4": {
+      "mode": "head_only",
+      "n_patches": 1,
+      "total_params": 505663417,
+      "trainable_params": 6145,
+      "trainable_pct": 0.0012
+    },
+    "sub_6": {
+      "mode": "head_only",
+      "n_patches": 1,
+      "total_params": 505663417,
+      "trainable_params": 6145,
+      "trainable_pct": 0.0012
+    },
+    "sub_7": {
+      "mode": "head_only",
+      "n_patches": 1,
+      "total_params": 505663417,
+      "trainable_params": 6145,
+      "trainable_pct": 0.0012
+    },
+    "sub_10": {
+      "mode": "head_only",
+      "n_patches": 1,
+      "total_params": 505663417,
+      "trainable_params": 6145,
+      "trainable_pct": 0.0012
+    },
+    "sub_5": {
+      "mode": "head_only",
+      "n_patches": 1,
+      "total_params": 505663417,
+      "trainable_params": 6145,
+      "trainable_pct": 0.0012
+    },
+    "sub_8": {
+      "mode": "head_only",
+      "n_patches": 1,
+      "total_params": 505663417,
+      "trainable_params": 6145,
+      "trainable_pct": 0.0012
+    },
+    "sub_9": {
+      "mode": "head_only",
+      "n_patches": 1,
+      "total_params": 505663417,
+      "trainable_params": 6145,
+      "trainable_pct": 0.0012
+    }
+  },
+  "splits": [
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 303,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.877377377,
+        1461.877377377
+      ],
+      "test_time_range": [
+        1728.877377377,
+        3434.877377377
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_1",
+      "fold": 0
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 609,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.877377377,
+        2846.877377377
+      ],
+      "test_time_range": [
+        3438.877377377,
+        5250.24346908656
+      ],
+      "n_val": 107,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_1",
+      "fold": 1
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 914,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.877377377,
+        4495.877377377
+      ],
+      "test_time_range": [
+        5257.63,
+        7096.877377377
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_1",
+      "fold": 2
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1220,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        12.877377377,
+        5922.491
+      ],
+      "test_time_range": [
+        7101.877377377,
+        8745.877377377
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_1",
+      "fold": 3
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 301,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        10.5,
+        1384.3
+      ],
+      "test_time_range": [
+        1618.2875957446806,
+        3019.061702127659
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_2",
+      "fold": 0
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 610,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        10.5,
+        2668.116319148937
+      ],
+      "test_time_range": [
+        3046.5,
+        4526.74988178914
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_2",
+      "fold": 1
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 916,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        10.5,
+        3698.5
+      ],
+      "test_time_range": [
+        4534.691,
+        6117.5
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_2",
+      "fold": 2
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1222,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        10.5,
+        5109.921
+      ],
+      "test_time_range": [
+        6128.5,
+        7894.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_2",
+      "fold": 3
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 303,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        910.9529488817892
+      ],
+      "test_time_range": [
+        1074.5,
+        2269.619999999999
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_3",
+      "fold": 0
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 610,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1902.306709265176
+      ],
+      "test_time_range": [
+        2271.4009999999994,
+        3512.5
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_3",
+      "fold": 1
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 912,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2916.5709999999995
+      ],
+      "test_time_range": [
+        3520.94498402556,
+        4748.230999999999
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_3",
+      "fold": 2
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1220,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        4071.5
+      ],
+      "test_time_range": [
+        4750.5,
+        5905.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_3",
+      "fold": 3
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 299,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        835.5
+      ],
+      "test_time_range": [
+        1017.191,
+        1984.673194888179
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_4",
+      "fold": 0
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 609,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1663.461
+      ],
+      "test_time_range": [
+        1991.041,
+        3009.5
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_4",
+      "fold": 1
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 913,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2531.221
+      ],
+      "test_time_range": [
+        3010.5,
+        3961.5
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_4",
+      "fold": 2
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1219,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        3437.29
+      ],
+      "test_time_range": [
+        3963.936102236422,
+        4949.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_4",
+      "fold": 3
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 299,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        484.5
+      ],
+      "test_time_range": [
+        564.5,
+        1177.5
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_6",
+      "fold": 0
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 607,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        977.5
+      ],
+      "test_time_range": [
+        1180.62,
+        1760.4736170212768
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_6",
+      "fold": 1
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 911,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1486.2021276595744
+      ],
+      "test_time_range": [
+        1760.78085106383,
+        2437.5
+      ],
+      "n_val": 161,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_6",
+      "fold": 2
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1219,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2025.7854680851065
+      ],
+      "test_time_range": [
+        2438.5,
+        3023.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_6",
+      "fold": 3
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 303,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        910.9529488817892
+      ],
+      "test_time_range": [
+        1074.5,
+        2262.798446601941
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_7",
+      "fold": 0
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 609,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1899.318466453674
+      ],
+      "test_time_range": [
+        2269.619999999999,
+        3540.5162715654947
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_7",
+      "fold": 1
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 911,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2916.5709999999995
+      ],
+      "test_time_range": [
+        3541.6510000000003,
+        4751.5
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_7",
+      "fold": 2
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1218,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        4071.5
+      ],
+      "test_time_range": [
+        4755.571884984026,
+        5901.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_7",
+      "fold": 3
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 303,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        633.541
+      ],
+      "test_time_range": [
+        826.7258562300318,
+        1771.311
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_10",
+      "fold": 0
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 606,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1454.5
+      ],
+      "test_time_range": [
+        1774.99,
+        2711.811501597444
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_10",
+      "fold": 1
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 912,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2282.624595469256
+      ],
+      "test_time_range": [
+        2713.5,
+        3821.5
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_10",
+      "fold": 2
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1219,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        3125.5
+      ],
+      "test_time_range": [
+        3822.5,
+        4799.211
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_10",
+      "fold": 3
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 302,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        754.5
+      ],
+      "test_time_range": [
+        895.2450255591056,
+        1828.5
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_5",
+      "fold": 0
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 607,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1500.511
+      ],
+      "test_time_range": [
+        1830.5,
+        2770.208635782749
+      ],
+      "n_val": 107,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_5",
+      "fold": 1
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 914,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2356.5
+      ],
+      "test_time_range": [
+        2774.61,
+        3819.80124600639
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_5",
+      "fold": 2
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1221,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        3154.491
+      ],
+      "test_time_range": [
+        3822.5,
+        4865.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_5",
+      "fold": 3
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 300,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        522.071
+      ],
+      "test_time_range": [
+        662.5,
+        1294.031
+      ],
+      "n_val": 53,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_8",
+      "fold": 0
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 604,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        1102.5272507065
+      ],
+      "test_time_range": [
+        1294.8126148566814,
+        1953.5
+      ],
+      "n_val": 107,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_8",
+      "fold": 1
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 909,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        1650.5
+      ],
+      "test_time_range": [
+        1954.5,
+        2678.5
+      ],
+      "n_val": 161,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_8",
+      "fold": 2
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1219,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        2238.5
+      ],
+      "test_time_range": [
+        2679.5179652805814,
+        3389.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_8",
+      "fold": 3
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 302,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        1051.370607028754
+      ],
+      "test_time_range": [
+        1242.67,
+        2488.4
+      ],
+      "n_val": 54,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_9",
+      "fold": 0
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 611,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        2136.51
+      ],
+      "test_time_range": [
+        2503.9009999999985,
+        3876.390999999999
+      ],
+      "n_val": 108,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_9",
+      "fold": 1
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 914,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        3226.5
+      ],
+      "test_time_range": [
+        3881.5,
+        5256.617805111821
+      ],
+      "n_val": 162,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_9",
+      "fold": 2
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1221,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        2.5,
+        4422.5
+      ],
+      "test_time_range": [
+        5259.199999999999,
+        6459.5
+      ],
+      "n_val": 216,
+      "overlapping_train_val_pairs": 0,
+      "overlapping_val_test_pairs": 0,
+      "causal": true,
+      "subject": "sub_9",
+      "fold": 3
+    }
+  ],
+  "caveat": "L=1: the TimeEncoder's self-attention spans the PATCH axis, so with a single patch it cannot mix information and its 12 layers reduce to a token-wise transform (their FFNs still transform). The ChannelEncoder's attention over ELECTRODES is fully functional. Any comparison with BrainBERT/PopT, whose inputs match their pretraining footprint, must state this.",
+  "readout_note": "mean over patches then electrodes; compare against the frozen Brant_pop_* rows, NOT the per-electrode rows (mean-pooling costs ~0.12-0.13 AUROC here). Compare adapted modes against head_only, not the frozen LogReg row (see RESULTS 4b).",
+  "config": {
+    "endpoint": "word_nonword",
+    "mode": "head_only",
+    "subjects": "",
+    "root": "<BTB_DATA_ROOT>",
+    "electrode_set": "voxel",
+    "brant_src": "<BRANT_SRC>",
+    "weights_dir": "<BRANT_WEIGHTS>",
+    "n_patches": "1",
+    "folds": "4",
+    "val_frac": "0.15",
+    "epochs": "20",
+    "patience": "5",
+    "eval_every": "1",
+    "batch_size": "2",
+    "eval_batch_size": "4",
+    "accum_iter": "8",
+    "lr": "1e-05",
+    "head_lr": "0.001",
+    "wd": "0.005",
+    "max_norm": "1.0",
+    "lora_r": "4",
+    "lora_alpha": "16",
+    "lora_last_n": "4",
+    "use_amp": "True",
+    "profile_only": "False",
+    "loss": "bce",
+    "seed": "42",
+    "device": "cuda",
+    "save_root": "None"
+  }
+}

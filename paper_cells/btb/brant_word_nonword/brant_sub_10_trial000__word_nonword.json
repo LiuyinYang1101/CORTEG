@@ -1,0 +1,131 @@
+{
+  "config": {
+    "root": "<BTB_DATA_ROOT>",
+    "out_root": "<OUTPUT_ROOT>/btb_rebench/brant_word_nonword",
+    "subj": "sub_10",
+    "trial": "trial000",
+    "movie": "cars-2",
+    "fs": 2037.9600020442626,
+    "win_sec": 5.0,
+    "pre_sec": -2.5,
+    "n_patches": 1,
+    "max_per_class": 900,
+    "batch_size": 16,
+    "device": "cuda",
+    "seed": 42,
+    "n_folds": 4,
+    "endpoint": "word_nonword",
+    "neg_mode": "upstream",
+    "max_silence_sec": 10.0,
+    "brant_src": "<BRANT_SRC>",
+    "weights_dir": "<BRANT_WEIGHTS>",
+    "tag": "sub_10_trial000",
+    "_win_explicit": false
+  },
+  "n_events": 1800,
+  "n_pos": 900,
+  "n_folds": 4,
+  "splits": [
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 359,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        819.53
+      ],
+      "test_time_range": [
+        826.7258562300318,
+        1771.311
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 718,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        1761.3
+      ],
+      "test_time_range": [
+        1774.99,
+        2711.811501597444
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1077,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        2705.5
+      ],
+      "test_time_range": [
+        2713.5,
+        3821.5
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 6.11,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1800,
+      "n_train": 1437,
+      "n_test": 360,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        4.5,
+        3809.5
+      ],
+      "test_time_range": [
+        3822.5,
+        4799.211
+      ],
+      "causal": true
+    }
+  ],
+  "fs_measured": 2037.9600020442626,
+  "footprint_sec": 6.11,
+  "endpoint": "word_nonword",
+  "wnw_meta": {
+    "neg_mode": "upstream",
+    "tile_sec": 1.0,
+    "win_sec": 5.0,
+    "n_pos_available": 900,
+    "n_neg_available": 1558,
+    "trigger_range": [
+      0.0,
+      4803.470136803
+    ],
+    "neg_in_silence_ge20s_frac": 0.4255555555555556,
+    "neg_in_silence_gt60s_frac": 0.14444444444444443,
+    "neg_silence_len_median": 16.53156549520736
+  },
+  "arms": {
+    "Brant_population": 0.5036310112453021,
+    "Brant_single_elec_mean": 0.5110379188505767,
+    "Brant_single_elec_max": 0.5545738972517521
+  },
+  "readout_note": "Brant_population is the historical channel-mean-pooled row; single_elec_{mean,max} mirror btb_fm_positive_control.py:465-468 so Brant is read out the same way BrainBERT is",
+  "fold_auroc": [
+    0.527340731352972,
+    0.4648572525924977,
+    0.5440043827140602,
+    0.4783216783216783
+  ]
+}

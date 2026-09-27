@@ -1,0 +1,112 @@
+{
+  "config": {
+    "root": "<BTB_DATA_ROOT>",
+    "out_root": "<OUTPUT_ROOT>/btb_rebench/fm_sentence_onset",
+    "subj": "sub_9",
+    "trial": "trial000",
+    "movie": "ant-man",
+    "endpoint": "sentence_onset",
+    "fs": 1018.9800010221313,
+    "win_sec": 1.5,
+    "pre_sec": 0.0,
+    "guard": 0.5,
+    "max_per_class": 900,
+    "train_frac": 0.8,
+    "reref": "laplacian_xyz",
+    "batch_size": 256,
+    "device": "cuda",
+    "seed": 42,
+    "n_folds": 4,
+    "skip_popt": false,
+    "event_chunk": 200,
+    "no_cache": true,
+    "tag": "sub_9_trial000",
+    "_win_explicit": false
+  },
+  "n_events": 1783,
+  "splits": [
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1783,
+      "n_train": 353,
+      "n_test": 356,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        22.79,
+        978.2907348242812
+      ],
+      "test_time_range": [
+        985.9662715654952,
+        2408.862661341853
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1783,
+      "n_train": 713,
+      "n_test": 357,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        22.79,
+        2408.862661341853
+      ],
+      "test_time_range": [
+        2416.4568690095844,
+        3698.658881789137
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1783,
+      "n_train": 1067,
+      "n_test": 356,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        22.79,
+        3663.4210000000007
+      ],
+      "test_time_range": [
+        3699.110999999999,
+        4980.860999999999
+      ],
+      "causal": true
+    },
+    {
+      "scheme": "forward_chaining",
+      "win_sec": 1.5,
+      "embargo_sec": 7.0,
+      "n_events_scored": 1783,
+      "n_train": 1421,
+      "n_test": 357,
+      "overlapping_train_test_pairs": 0,
+      "train_time_range": [
+        22.79,
+        4967.622779552715
+      ],
+      "test_time_range": [
+        4981.611,
+        6443.98
+      ],
+      "causal": true
+    }
+  ],
+  "n_pos": 892,
+  "cv_folds": 5,
+  "arms": {
+    "BrainBERT_single_elec_mean": 0.5005023881474903,
+    "BrainBERT_single_elec_max": 0.5321033827401221,
+    "BrainBERT_pop_meanpool": 0.5125464447145968,
+    "rawHGA_perchannel": 0.5376994498131091,
+    "rawBandpower_perchannel": 0.525666699534078,
+    "rawHGA_popmean_legacy": 0.501233393937777,
+    "PopT_population": 0.522302197887952
+  }
+}

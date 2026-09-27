@@ -1,0 +1,58 @@
+{
+  "fm": "brainbert",
+  "dataset": "Stanford",
+  "train_mode": "loo",
+  "mode": "finetune",
+  "unfreeze_last_n": 2,
+  "score": 0.03499707011522972,
+  "score_mse": 1.4203943014144897,
+  "per_subject": {
+    "bp": {
+      "corr_mean": 0.03499707011522972,
+      "corr": [
+        0.051987257641892826,
+        0.08820234740931926,
+        -0.045134090243061746,
+        0.05164918503744189,
+        0.028280650730556373
+      ],
+      "mse": 1.4203943014144897,
+      "n": 5225
+    }
+  },
+  "args": {
+    "fm": "brainbert",
+    "dataset": "Stanford",
+    "train_mode": "loo",
+    "seed": 42,
+    "mode": "finetune",
+    "unfreeze_last_n": 2,
+    "ft_lr": 0.0001,
+    "max_windows": 0,
+    "save_root": "<OUTPUT_ROOT>/P9FM/Stanford/brainbert/loo/seed42",
+    "emb_cache": "<OUTPUT_ROOT>/fm_emb_cache",
+    "data_root": "",
+    "native_root": "<STANFORD_NATIVE_1K>",
+    "ghent_root": "",
+    "head": "linear",
+    "mlp_hidden": 256,
+    "mlp_dropout": 0.1,
+    "epochs": 60,
+    "early_stop_patience": 20,
+    "batch_size": 256,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "warmup_epochs": 5,
+    "min_lr": 1e-06,
+    "val_ratio": 0.1,
+    "use_amp": true,
+    "reref": "laplacian_xyz",
+    "skip_subjects": "",
+    "subjects": "",
+    "debug_fake_emb": false,
+    "step_ms": 200,
+    "eval_step_ms": 50,
+    "target_mode": "endpoint"
+  },
+  "n_trainable": 14179589
+}

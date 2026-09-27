@@ -1,0 +1,57 @@
+{
+  "fm": "popt",
+  "dataset": "Stanford",
+  "train_mode": "loo",
+  "mode": "probe",
+  "unfreeze_last_n": 2,
+  "score": 0.1551213187249515,
+  "score_mse": 0.7919296026229858,
+  "per_subject": {
+    "cc": {
+      "corr_mean": 0.1551213187249515,
+      "corr": [
+        0.10679530454693126,
+        0.18280752779902762,
+        0.08768992153481968,
+        0.19712713547608496,
+        0.20118670426789398
+      ],
+      "mse": 0.7919296026229858,
+      "n": 5225
+    }
+  },
+  "args": {
+    "fm": "popt",
+    "dataset": "Stanford",
+    "train_mode": "loo",
+    "seed": 42,
+    "mode": "probe",
+    "unfreeze_last_n": 2,
+    "ft_lr": 0.0001,
+    "max_windows": 0,
+    "save_root": "<OUTPUT_ROOT>/P7FM/Stanford/popt/loo/seed42",
+    "emb_cache": "<OUTPUT_ROOT>/fm_emb_cache",
+    "data_root": "",
+    "native_root": "<STANFORD_NATIVE_1K>",
+    "ghent_root": "",
+    "head": "linear",
+    "mlp_hidden": 256,
+    "mlp_dropout": 0.1,
+    "epochs": 60,
+    "early_stop_patience": 20,
+    "batch_size": 256,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "warmup_epochs": 10,
+    "min_lr": 1e-06,
+    "val_ratio": 0.1,
+    "use_amp": true,
+    "reref": "laplacian_xyz",
+    "skip_subjects": "",
+    "subjects": "",
+    "debug_fake_emb": false,
+    "step_ms": 200,
+    "eval_step_ms": 50,
+    "target_mode": "endpoint"
+  }
+}
