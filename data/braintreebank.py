@@ -1,18 +1,25 @@
 """BrainTreebank: loading, feature extraction, and leakage-free temporal splits.
 
 BrainTreebank (Wang et al., 2024) is public sEEG from 10 patients watching films,
-with a word-level transcript. The paper's task is **sentence-onset detection**:
-given a 1.5 s window of sEEG, did a sentence begin?
+with a word-level transcript. The paper scores two binary tasks:
+
+* **Task A**, sentence-initial vs mid-sentence word (``load_events``). Both
+  classes are words. Upstream BrainBERT/PopT's ``sentence_onset`` task is a
+  different contrast: sentence-initial words against silence.
+* **Task B**, word vs non-word (``word_nonword_events``), the BrainBERT/PopT
+  benchmark: word onsets against the centres of 1 s word-free tiles.
+
+Both keep at most ``max_per_class`` events per class, drawn with a fixed seed.
 
 The raw recordings are ~52 GB and are not redistributed here. Download them from
 https://braintreebank.dev/ and point ``BTB_DATA_ROOT`` at the directory holding
 ``all_subject_data/``, ``electrode_labels/``, ``localization/``,
-``subject_timings/`` and ``transcripts/``.
+``subject_metadata/``, ``subject_timings/`` and ``transcripts/``.
 
 Three things this module is careful about, each of which was a real bug:
 
-1. **Sampling rate is measured, not assumed.** Nine subjects run at 2048 Hz but
-   ``sub_9`` runs at 1019 Hz. Hardcoding 2048 silently mis-scales every window
+1. **Sampling rate is measured, not assumed.** Nine subjects run at a nominal 2048 Hz
+   (measured 2038-2050 Hz) but ``sub_9`` runs at about 1019 Hz. Hardcoding 2048 silently mis-scales every window
    length and every frequency band for that subject.
 2. **Events outside the trigger range are dropped, not clamped.** ``np.interp``
    clamps out-of-range inputs to the end value, which collapses every late event
@@ -22,7 +29,8 @@ Three things this module is careful about, each of which was a real bug:
 
 The feature transform matches the Stanford pipeline so the same CORTEG model runs
 on both datasets: a low stream at 128 Hz and a high-frequency-activity envelope
-at 200 Hz, giving 8 tokens per electrode from each.
+at 200 Hz, tokenised in patches of 16 and 25 samples. Over CORTEG's 1.5 s window
+that is 192 and 300 samples, i.e. 12 tokens per electrode from each stream.
 """
 
 from __future__ import annotations
@@ -52,7 +60,8 @@ def btb_output_root() -> str:
 # =========================================================================
 
 def load_electrode_map(root, subj):
-    names = json.load(open(f"{root}/electrode_labels/{subj}/electrode_labels.json"))
+    with open(f"{root}/electrode_labels/{subj}/electrode_labels.json", encoding="utf-8") as fh:
+        names = json.load(fh)
     return {n: i for i, n in enumerate(names)}, names
 
 
@@ -157,7 +166,12 @@ def estimate_fs(root, subj, trial):
 
 
 def load_events(root, movie, max_per_class, seed):
-    """Return (starts_sec, labels) balanced pos/neg from the transcript."""
+    """Task A events: (starts_sec, labels), balanced, in temporal order.
+
+    Every timed transcript word is a candidate, labelled 1 if it begins a
+    sentence (``is_onset``) and 0 otherwise, so both classes are words. At most
+    ``max_per_class`` of each class are drawn with ``RandomState(seed)``.
+    """
     starts, lab = [], []
     with open(f"{root}/transcripts/{movie}/features.csv") as f:
         for row in csv.DictReader(f):
@@ -213,8 +227,10 @@ def extract_windows(root, subj, trial, ch_idx, starts_sec, t2s, fs, pre_sec, win
 # The second BrainTreebank endpoint, and the upstream Population Transformer
 # benchmark. Positives are word onsets; negatives are non-overlapping 1 s tiles
 # intersecting no word. Both are reported as the WINDOW CENTRE, because upstream
-# centres its 5 s window -- which is also why this arm's overlap footprint is
-# 5.0 s rather than Task A's 1.5 s. Transcribed from PopulationTransformer's
+# centres its 5 s window. An arm reading that centred 5 s window has a 5.0 s
+# overlap footprint; CORTEG reads [centre, centre+1.5], so its footprint stays
+# 1.5 s. Candidates are filtered with the 5 s window either way, so every arm
+# scores the same events. Transcribed from PopulationTransformer's
 # data/trial_data_reader.py.
 # ---------------------------------------------------------------------------
 TILE_SEC = 1.0        # upstream interval_duration
@@ -253,6 +269,17 @@ def word_nonword_events(root, subj, trial, movie, max_per_class, seed,
 
     Positives: word onsets (centre = onset, matching upstream's est_idx alignment).
     Negatives: non-overlapping `tile_sec` tiles intersecting no word; centre = tile centre.
+
+    `win_sec` only filters candidates: an event is kept if the `win_sec` window
+    centred on it fits inside the trigger range. It is not the window a model
+    reads. Keep the default 5.0 s for every arm, CORTEG's 1.5 s arm included:
+    that is what the paper runs did, and it gives all arms the same events.
+
+    `neg_mode="upstream"` (the paper) draws negatives uniformly from all
+    word-free tiles, so many fall in long silences such as credits;
+    `"short_silence"` draws them only from pauses shorter than
+    `max_silence_sec`. `meta` reports the fraction of selected negatives in
+    silences of 20 s or more, and of more than 60 s.
     """
     w_lo, w_hi = _words(root, movie)
     if w_lo.size == 0:
@@ -288,7 +315,8 @@ def word_nonword_events(root, subj, trial, movie, max_per_class, seed,
     rng = np.random.RandomState(seed)
     k = min(pos.size, neg_all.size, int(max_per_class))
     if k < 50:
-        raise RuntimeError(f"{subj}/{movie}: too few events (pos={pos.size} neg={neg_all.size})")
+        raise RuntimeError(f"{subj}/{movie}: too few events (pos={pos.size} neg={neg_all.size} "
+                           f"max_per_class={max_per_class}); Task B needs at least 50 per class")
 
     if neg_mode == "short_silence" and sil.size:
         # SECONDARY arm: negatives drawn ONLY from SHORT pauses (< max_silence_sec), so the class is
@@ -416,9 +444,12 @@ def corteg_features(x_raw: np.ndarray, fs: float,
 # The embargo is sized once by the widest arm sharing the split, so that every
 # arm sees the same train/test membership and the comparison stays fair:
 #
-#     sentence-onset probes, CORTEG   1.5 s   [t, t+1.5]
-#     word-vs-non-word (upstream)     5.0 s   [t-2.5, t+2.5]
-#     Brant L=1                       6.11 s  [t-4.5, t+1.5] + resample FIR edge
+#     Task A probes, CORTEG           1.5 s   [t, t+1.5]
+#     Task B, CORTEG                  1.5 s   [c, c+1.5], c = window centre
+#     Task B, upstream-style arms     5.0 s   [c-2.5, c+2.5]
+#     Brant L=1                       6.11 s  6 s ending at the task window's right edge
+#                                             ([t-4.5, t+1.5] Task A, [t-3.5, t+2.5] Task B)
+#                                             + resample FIR edge
 #     ----------------------------------------------------------------
 #     EMBARGO_SEC = 7.0               widest (6.11) plus margin
 
@@ -427,9 +458,14 @@ EMBARGO_SEC = 7.0
 
 # Per-arm footprints. Callers pass their own; this is the reference table.
 ARM_FOOTPRINT_SEC = {
-    "sentence_onset": 1.5,          # [t, t+1.5] -- pre-roll REMOVED, see SPEC section 3
-    "word_nonword_upstream": 5.0,   # [t-2.5, t+2.5] -- upstream convention, for comparability
-    "brant_L1": 6.11,               # [t-4.5, t+1.5] + resample FIR edge; sets the embargo
+    # [t, t+1.5]. No pre-roll: one straddled the pause before sentence-initial
+    # words and made Task A partly a pause detector.
+    "sentence_onset": 1.5,
+    "word_nonword_corteg": 1.5,     # [c, c+1.5], CORTEG's own window on Task B
+    "word_nonword_upstream": 5.0,   # [c-2.5, c+2.5] -- upstream convention, for comparability
+    # 6 s ending at the task window's right edge ([t-4.5, t+1.5] Task A, [t-3.5, t+2.5]
+    # Task B) + resample FIR edge; sets the embargo
+    "brant_L1": 6.11,
 }
 
 
@@ -449,7 +485,7 @@ def assert_no_window_overlap(times, win_sec: float, a_idx, b_idx, label: str = "
     """Raise unless ZERO cross-block pairs have overlapping windows. Returns the count (0).
 
     `win_sec` is the ARM's true footprint and must be supplied by the caller. It is deliberately not
-    defaulted to the embargo: doing so made this check a tautology (audit defect D2).
+    defaulted to the embargo: doing so made this check a tautology (an earlier version did exactly that).
     """
     if win_sec is None or not np.isfinite(win_sec) or win_sec <= 0:
         raise ValueError("win_sec must be the arm's true footprint in seconds, > 0")
@@ -472,7 +508,7 @@ def _check_embargo(win_sec: float, embargo_sec: float) -> None:
 
 
 def assert_valid_times(times, n_expected: int | None = None) -> np.ndarray:
-    """Guard against audit defect D1: the split MUST be built on the events actually scored.
+    """Guard against a real bug: the split MUST be built on the events actually scored.
 
     Pass the event times AFTER the trigger-range / window-bounds mask, never the raw transcript list.
     """
@@ -484,7 +520,7 @@ def assert_valid_times(times, n_expected: int | None = None) -> np.ndarray:
     if n_expected is not None and t.size != n_expected:
         raise ValueError(
             f"times has {t.size} events but {n_expected} will be scored -- split and scoring "
-            f"disagree (audit defect D1: sub_6 lost 100% of its test block this way)"
+            f"disagree (a mismatch once cost sub_6 100% of its test block this way)"
         )
     return t
 
@@ -500,7 +536,7 @@ def forward_chaining_split(times, win_sec: float, n_folds: int = 4,
 
     Chosen over a single 60/15/25 cut because that gave only 450 test events per subject and dropped
     power for the headline FM contrast from 0.971 to 0.706, while shifting the estimand to
-    "final-quarter discriminability" (audit defect D4). Forward chaining tests on ~75 % of events,
+    "final-quarter discriminability" (an earlier version did). Forward chaining tests on ~75 % of events,
     recovers the session-average estimand to 0.011 MAE, and keeps power at 0.947.
 
     With `val_frac > 0` each fold returns (fit_idx, val_idx, test_idx) forming a strictly ordered
@@ -530,9 +566,9 @@ def forward_chaining_split(times, win_sec: float, n_folds: int = 4,
 
         if val_frac and val_frac > 0:
             # Causal val block: the TAIL of the history, embargoed from BOTH fit and test, giving
-            # fit | embargo | val | embargo | test. A random val carve (as btb_corteg_pooled.py:329
-            # did via rng.permutation) interleaves val with fit, so early stopping selects on
-            # overlapping windows -- model-selection leakage even when train/test is clean.
+            # fit | embargo | val | embargo | test. A random val carve (an earlier version of this
+            # pipeline drew one with rng.permutation) interleaves val with fit, so early stopping
+            # selects on overlapping windows -- model-selection leakage even when train/test is clean.
             n_val = max(1, int(round(val_frac * pool.size)))
             va_pos = pool[-n_val:]
             t_val0 = ts[va_pos[0]]
