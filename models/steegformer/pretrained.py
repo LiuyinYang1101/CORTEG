@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import os
 import json
-import argparse
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional
 
 import torch
 import torch.nn as nn
@@ -275,93 +274,4 @@ def load_pretrained_with_report(
         if verbose:
             print(f"[pretrained] report saved: {save_report_json}", flush=True)
 
-    return msg
-
-
-def load_backbone_pretrained(backbone: nn.Module, cfg: Dict[str, Any]):
-    """
-    Robust checkpoint loader for STEEGFormerBackbone.
-
-    Supports:
-      - ckpt[ckpt_key] as state_dict
-      - ckpt["state_dict"]
-      - raw state_dict
-    Handles:
-      - strip_prefix
-      - DDP "module."
-      - wrapper "backbone."
-      - drops decoder-only keys
-      - remaps old channel embedding key to new nn.Embedding if present
-    """
-    from paths import resolve_pretrained_path
-    path = resolve_pretrained_path(str(cfg.get("path", "")))
-    if not path:
-        raise ValueError("pretrained.path is required")
-
-    ckpt_key = str(cfg.get("ckpt_key", "model"))
-    strict = bool(cfg.get("strict", False))
-    strip_prefix = str(cfg.get("strip_prefix", ""))
-
-    ckpt = torch.load(path, map_location="cpu", weights_only=False)
-
-    if isinstance(ckpt, dict) and ckpt_key in ckpt and isinstance(ckpt[ckpt_key], dict):
-        sd = ckpt[ckpt_key]
-    elif isinstance(ckpt, dict) and "state_dict" in ckpt and isinstance(ckpt["state_dict"], dict):
-        sd = ckpt["state_dict"]
-    elif isinstance(ckpt, dict) and all(isinstance(k, str) for k in ckpt.keys()):
-        sd = ckpt
-    else:
-        raise ValueError(f"Checkpoint format not understood. type={type(ckpt)} keys={list(ckpt.keys()) if isinstance(ckpt, dict) else None}")
-
-    if strip_prefix:
-        sd = {(k[len(strip_prefix):] if k.startswith(strip_prefix) else k): v for k, v in sd.items()}
-
-    if any(k.startswith("module.") for k in sd.keys()):
-        sd = {k[len("module."):]: v for k, v in sd.items()}
-
-    if any(k.startswith("backbone.") for k in sd.keys()):
-        sd = {k[len("backbone."):]: v for k, v in sd.items() if k.startswith("backbone.")}
-
-    drop_prefixes = (
-        "decoder_", "decoder.", "decoder_blocks.", "decoder_norm.", "decoder_pred.",
-        "dec_", "dec.",
-        "mask_token",
-        "decoder_embed.",
-    )
-    sd = {k: v for k, v in sd.items() if not k.startswith(drop_prefixes)}
-
-    old_k = "enc_channel_emd.channel_transformation.weight"
-    new_k = "enc_channel.emb.weight"
-    if old_k in sd and hasattr(backbone, "enc_channel") and hasattr(backbone.enc_channel, "emb"):
-        w = sd[old_k]
-        tgt = backbone.enc_channel.emb.weight
-        if w.shape == tgt.shape:
-            sd[new_k] = w
-        elif w.t().shape == tgt.shape:
-            sd[new_k] = w.t()
-        else:
-            w2 = w
-            if w2.ndim == 2 and w2.t().shape == tgt.shape:
-                w2 = w2.t()
-            if w2.ndim == 2 and w2.shape[1] == tgt.shape[1]:
-                tmp = tgt.detach().clone()
-                rows = min(tmp.shape[0], w2.shape[0])
-                tmp[:rows] = w2[:rows]
-                sd[new_k] = tmp
-                print(f"[pretrained] Partial channel-emb load rows=0..{rows-1}")
-            else:
-                print(f"[pretrained] WARNING: cannot map {old_k} {tuple(w.shape)} -> {new_k} {tuple(tgt.shape)}")
-        sd.pop(old_k, None)
-
-    # Drop old learned temporal pe keys if present
-    sd.pop("enc_temporal_emd.pe", None)
-    sd.pop("dec_temporal_emd.pe", None)
-    sd.pop("enc_time.pe", None)
-
-    msg = backbone.load_state_dict(sd, strict=strict)
-    print(f"[pretrained] loaded {path} (missing={len(msg.missing_keys)} unexpected={len(msg.unexpected_keys)})")
-    if msg.missing_keys:
-        print("missing keys (first 20):", msg.missing_keys[:20])
-    if msg.unexpected_keys:
-        print("unexpected keys (first 20):", msg.unexpected_keys[:20])
     return msg

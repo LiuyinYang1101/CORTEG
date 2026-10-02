@@ -20,7 +20,7 @@
 # every arm scores the same events, drawn once with event seed 42.
 #
 # Third-party code and weights are not redistributed. Point these at your own
-# copies (download sources are in README.md):
+# copies (download sources are in REPRODUCING.md):
 #   BRAINBERT_REPO  BRAINBERT_WEIGHTS
 #   POPT_REPO       POPT_WEIGHTS (optional: unset, PopT's checkpoint is
 #                   downloaded from Hugging Face)

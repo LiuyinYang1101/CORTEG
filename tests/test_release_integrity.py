@@ -1,11 +1,11 @@
 """Release-integrity tests for the CORTEG public repo.
 
-These guard the class of defect that made the v1 release reproduce the wrong
+These guard against a class of defect that makes a release reproduce the wrong
 experiment: a shell script that silently disagrees with the runner it calls.
 Most checks are static. The few that build a model run on CPU and skip cleanly
 when the ST-EEGFormer backbone is absent. Each area also has its own test file
-(tests/test_btb_corteg.py, test_btb_baselines.py, test_btb_fm.py,
-test_fm_regression.py, test_paper_cells.py, test_demo_data.py); this one holds
+(tests/test_btb_corteg.py, test_btb_fm.py, test_fm_regression.py,
+test_paper_cells.py, test_demo_data.py); this one holds
 the checks that span the whole release.
 
 Run:  python -m unittest discover -s tests -v
@@ -501,10 +501,35 @@ class TestReleasedCheckpoint(unittest.TestCase):
         spec = parser_spec(RUNNER)
         man = json.loads((REPO / "checkpoints" / "corteg_stanford_pooled.json")
                          .read_text(encoding="utf-8"))
-        stale = sorted(k for k in man["build_args"] if f"--{k}" not in spec)
+        retired = set(man["retired_build_args"]["keys"])
+        stale = sorted(k for k in man["build_args"]
+                       if f"--{k}" not in spec and k not in retired)
         self.assertEqual(stale, [],
                          "manifest build_args name flags the runner no longer has: "
                          f"{stale} — regenerate the manifest after the cleanup")
+        self.assertEqual(sorted(k for k in retired if f"--{k}" in spec), [],
+                         "a key listed as retired is still a runner flag")
+
+    def test_retired_build_args_match_the_fixed_code(self):
+        """Each retired key's recorded value is the behaviour now fixed in the code."""
+        import inspect
+        from models.steegformer.steegformer_hilo_clean import HiLoCleanBackbone
+        man = json.loads((REPO / "checkpoints" / "corteg_stanford_pooled.json")
+                         .read_text(encoding="utf-8"))
+        ba = man["build_args"]
+        self.assertEqual(set(man["retired_build_args"]["keys"]), {
+            "use_ecog_fuser", "M_EEG", "fuser_hidden", "knn_sigma", "head_hidden",
+            "finetune_token_mode", "finetune_lora_targets", "save_ckpt_path"})
+        # Values the run recorded, which the code now hard-codes.
+        self.assertEqual(ba["channel_adapter"], "knn_soft_fourier")   # so use_ecog_fuser was never read
+        self.assertEqual((ba["head_hidden"], ba["knn_sigma"], ba["finetune_token_mode"],
+                          ba["save_ckpt_path"]), (0, None, "", ""))
+        self.assertEqual(ba["finetune_lora_targets"], ba["lora_targets"])
+        attach = inspect.signature(HiLoCleanBackbone.attach_channel_adapter).parameters
+        self.assertEqual(ba["fuser_hidden"], attach["hidden"].default)
+        self.assertIsNone(attach["knn_sigma"].default)
+        table = inspect.signature(HiLoCleanBackbone.__init__).parameters["max_ch_idx"].default
+        self.assertEqual(ba["M_EEG"], table)
 
 
 class TestBrainTreebank(unittest.TestCase):
@@ -739,8 +764,8 @@ class TestBrainTreebank(unittest.TestCase):
     def test_task_b_footprint_is_wider_than_task_a(self):
         """The upstream-style Task B arms centre a 5 s window, so their footprint is 5.0.
 
-        That applies to the frozen and fine-tuned FM arms. CORTEG and the scratch
-        baselines read [c, c+1.5] on Task B too, so their footprint stays 1.5
+        That applies to the frozen and fine-tuned FM arms. CORTEG reads
+        [c, c+1.5] on Task B too, so its footprint stays 1.5
         (ARM_FOOTPRINT_SEC['word_nonword_corteg']) and passing 1.5 to the split for
         such a run does not under-embargo. Every footprint must stay below the
         shared 7 s embargo.
@@ -900,7 +925,7 @@ class TestTable1Scripts(unittest.TestCase):
         self.assertEqual(flags.get("--weight_decay"), "0.005")
 
     def test_loo_ft_stages_follow_the_paper_recipe(self):
-        """Stage 1 as the pooled row (frozen readout); Stage 2 the v3 recipe of App. A.1."""
+        """Stage 1 as the pooled row (frozen readout); Stage 2 the App. A.1 recipe."""
         s1, s2 = self._loo_stages()
         self.assertIn("--freeze_readout", s1)
         self.assertIn("--exclude_subjects", s1)
@@ -1050,7 +1075,7 @@ class TestDocs(unittest.TestCase):
     def test_docs_do_not_reference_removed_scripts(self):
         """Every file path and `python -m` module the README names must exist."""
         stale = []
-        for doc in ("README.md", "paper_cells/MANIFEST.md"):
+        for doc in ("README.md", "REPRODUCING.md", "paper_cells/MANIFEST.md"):
             text = (REPO / doc).read_text(encoding="utf-8")
             refs = set(re.findall(
                 r'\b((?:scripts|experiments|data|models|train|tests|notebooks|checkpoints|configs)'
@@ -1066,17 +1091,18 @@ class TestDocs(unittest.TestCase):
         self.assertEqual(stale, [], "\n" + "\n".join(stale))
 
     def test_readme_numbers_match_the_aggregators(self):
-        """The README's paper numbers are the ones the aggregators check.
+        """The documented paper numbers are the ones the aggregators check.
 
         scripts/aggregate_btb.py and scripts/aggregate_fm.py hold the paper's
-        values and check them against paper_cells/. The README's Expected-results
-        section and its Table 1 iEEG-FM rows must quote the same values; only the
+        values and check them against paper_cells/. REPRODUCING.md's Expected-results
+        section and the README's Table 1 iEEG-FM rows must quote the same values; only the
         numbers are checked, not the prose around them.
         """
         sys.path.insert(0, str(REPO / "scripts"))
         import aggregate_btb
         import aggregate_fm
         text = (REPO / "README.md").read_text(encoding="utf-8")
+        repro = (REPO / "REPRODUCING.md").read_text(encoding="utf-8")
 
         pm = r"(0\.\d+)\s*±\s*(0\.\d+)"
         t20 = {pair for a, b, _ in aggregate_btb.EXPECTED_T20.values() for pair in (a, b)}
@@ -1086,8 +1112,8 @@ class TestDocs(unittest.TestCase):
         fm |= {(m, s) for cells in aggregate_fm.EXPECTED_T1.values()
                for m, s, _ in cells.values()}
 
-        start = text.index("\n## Expected results")
-        section = text[start:text.index("\n## ", start + 1)]
+        start = repro.index("\n## Expected results")
+        section = repro[start:repro.index("\n## ", start + 1)]
         pairs = re.findall(pm, section)
         self.assertTrue(pairs, "no mean ± SD in the Expected results section")
         for mean, sd in pairs:
@@ -1105,7 +1131,8 @@ class TestDocs(unittest.TestCase):
             self.assertEqual(got, want, f"README Table 1 {label} row")
 
     def test_readme_does_not_advertise_the_broken_eval_recipe(self):
-        text = (REPO / "README.md").read_text(encoding="utf-8")
+        text = "".join((REPO / d).read_text(encoding="utf-8")
+                       for d in ("README.md", "REPRODUCING.md"))
         # Only fenced code blocks are recipes a reader would copy; surrounding
         # prose may legitimately name the broken pairing in order to warn about it.
         for block in re.findall(r"```[a-z]*\n(.*?)```", text, re.S):

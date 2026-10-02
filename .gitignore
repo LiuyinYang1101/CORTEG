@@ -55,9 +55,7 @@ logs/
 wandb/
 slurm-*.out
 
-# Local working copy of the paper PDF (released via arXiv)
-CORTEG.pdf
-
+# Paper PDFs (the paper is released via arXiv)
 *.pdf
 
 # Local Claude Code settings

@@ -7,14 +7,13 @@ r"""Reprint the BrainTreebank tables (paper Tables 3, 9 and 20) from per-cell re
 With the release scripts' default output folders:
 
     R="${CORTEG_OUTPUT_ROOT:-$HOME/workspace/outputs/corteg}/braintreebank"
-    python scripts/aggregate_btb.py --cells "$R/table3" "$R/base_HiLoFuseNet" \
-        "$R/base_CNN_LSTM" "$R/base_LSTM" "$R/fm_runs"
+    python scripts/aggregate_btb.py --cells "$R/table3" "$R/fm_runs"
 
 With no arguments this reads ``paper_cells/btb``, the result files behind the
 published numbers, rebuilds every cell of Tables 3, 9 and 20 and checks it
-against the value the paper prints, as well as the oracle null the Table 20
-footnote and the Table 9 caption quote ("at least 0.53": both cohort means at
-2 dp). It exits non-zero if any cell differs.
+against the value the paper prints, as well as the oracle null the Table 9
+caption quotes ("≈0.53": both cohort means at 2 dp). It exits non-zero if any
+cell differs.
 
 Aggregation rule, the one the paper uses:
 
@@ -38,24 +37,23 @@ producers (and their file names):
 
   experiments/run_btb_classification.py   btb_<train_mode>_<merge>_<endpoint>[_tags]_seed<S>.json
                                           CORTEG gate, mean-pool, random init
-  experiments/run_btb_baselines.py        results_<train_mode>_<endpoint>_s<S>[_ev<E>][_<tags>].json
-                                          HiLoFuseNet, CNN_LSTM, LSTM
   experiments/run_popt_finetune_btb.py    popt_<endpoint>_<mode>_seed<S>.json
                                           PopT LoRA, full fine-tune, head-only
   experiments/run_ieeg_fm_baselines.py    <fm>_<endpoint>_<arm>_seed<S>.json
                                           frozen BrainBERT / PopT / Brant arms
   and the paper-run formats in paper_cells/btb (see paper_cells/MANIFEST.md).
 
-The raw spectral probes, the BrainBERT and Brant adaptation arms (head-only,
-LoRA, full fine-tune) and the oracle permutation null have no runner in this
-release; their cells are reported as "not released", not as missing.
+The raw spectral probes, the from-scratch decoders (HiLoFuseNet, CNN-LSTM,
+LSTM), the BrainBERT and Brant adaptation arms (head-only, LoRA, full
+fine-tune) and the oracle permutation null have no runner in this release;
+their cells are reported as "not released", not as missing. Their paper-run
+files in paper_cells/btb are still read and checked.
 
 A run at a setting outside the paper becomes its own row, listed under "Other
 cells" and never averaged into a published one. The settings checked are the
 event set (event seed, events per class, Task B negatives), the training
 arrangement (per-subject training, shared LoRA, per-subject model selection,
-a loss other than BCE), the subjects of a CORTEG or decoder run and their
-training order (in pooled training the order is part of the run), a forced
+a loss other than BCE), the subjects of a CORTEG run and their training order (in pooled training the order is part of the run), a forced
 --trial, the CORTEG warm-up, and every recipe value in RECIPE_* below (folds,
 window, high-gamma band, backbone size, gate activation, epochs, learning
 rates, gradient clipping, validation interval, LoRA rank, batch size, ...).
@@ -63,8 +61,7 @@ The recipe values are the ones the paper runs record; a setting a file does
 not record is taken to be the paper's. As a last resort, a file whose runner
 records its own non-paper settings (``nonpaper_settings``, ``name_tags``) is
 tagged with them when none of these checks fired. For example a one-epoch
-smoke run on 50 events per class becomes ``corteg_gate[n50,epochs=1]``, and a
-``--train_mode per_subject`` HiLoFuseNet run ``hilofusenet[per_subject]``. A
+smoke run on 50 events per class becomes ``corteg_gate[n50,epochs=1]``. A
 file with no event seed comes from the runner version whose --seed also drew
 the events, so its training seed is taken as its event seed. Unrecognised JSON
 (summaries, caches, logs) is skipped; ``--verbose`` lists it. The same (arm,
@@ -170,9 +167,10 @@ TABLE3 = [
     ("corteg_randinit", "CORTEG, random init"),
     ("corteg_gate", "CORTEG (ours)"),
 ]
-# Table 20 rows whose runner is not part of this release (their result files
-# are in paper_cells/btb, so the published cells still recompute).
+# Rows whose runner is not part of this release (their result files are in
+# paper_cells/btb, so the published cells still recompute).
 NOT_RELEASED = {"raw_hga_perchannel", "raw_bandpower_perchannel", "raw_hga_channelmean",
+                "hilofusenet", "cnn_lstm", "lstm",
                 "bb_full_ft", "bb_head_only", "bb_lora",
                 "brant_head_only", "brant_lora", "brant_full_ft"}
 
@@ -266,8 +264,8 @@ DOUBLE_ROUNDING_TRAPS = {
 PAPER_SEEDS = {k: (42, 1, 2) for k in
                ("corteg_gate", "corteg_meanpool", "corteg_randinit",
                 "hilofusenet", "cnn_lstm", "lstm")}
-# Oracle permutation null (Table 20 footnote, Table 9 caption): "at least 0.53",
-# a lower bound measured on a 1-D high-gamma feature.
+# Oracle permutation null (Table 9 caption): "≈0.53". Measured on a 1-D high-gamma
+# feature, so it is a lower bound for the fitted probes.
 EXPECTED_NULL = "0.53"
 
 # Run-to-run floor: the largest difference between any two of three runs of the
@@ -447,7 +445,7 @@ def _event_tags(d, a, default_event_seed=42):
 
 def _subject_tag(subjects, train_mode="pooled"):
     """'' for the paper's subjects in the paper's order, else e.g. 'subj1-2', as the
-    CORTEG and decoder runners name their files. Pooled training depends on the
+    CORTEG runner names its files. Pooled training depends on the
     order; per-subject training only on the set. None (not recorded) is the paper's."""
     if not isinstance(subjects, (list, tuple)):
         return ""
@@ -514,18 +512,14 @@ def classify(path, d):
         return [Record(_variant(row, tags), _task(d, cfg), d["seed"], d["per_subject_auroc"],
                        path, _split_signature(d))]
 
-    # Scratch decoders (paper runs and experiments/run_btb_baselines.py). The paper
-    # files record neither train_mode nor subjects: they are pooled, in paper order.
+    # Scratch decoders (paper runs; their runner is not released). The files are
+    # pooled runs over the paper's subjects in the paper's order.
     if d.get("decoder") in DECODERS and "per_subject_auroc" in d and "seed" in d:
         feats = d.get("features") if isinstance(d.get("features"), dict) else {}
         hp = d.get("hp") if isinstance(d.get("hp"), dict) else {}
-        mode = d.get("train_mode") or "pooled"
         tags = _event_tags(d, {**feats, **args}) + [
-            "" if mode == "pooled" else mode,
-            _subject_tag(d.get("subjects"), mode),
             "" if d.get("loss", "bce") == "bce" else f"loss_{d.get('loss')}",
         ] + _recipe_tags({**d, **hp, **feats}, RECIPE_DECODER)
-        tags += _runner_tags(d, tags, "nonpaper_settings")
         return [Record(_variant(DECODERS[d["decoder"]], tags), _task(d, args), d["seed"],
                        d["per_subject_auroc"], path, _split_signature(d))]
 
@@ -809,7 +803,8 @@ def print_table3_9(cells, ck, out, why, tol_subject=None):
             where = f"T3 {label} Task {TASK_LABEL[task]}"
             if c is None:
                 row.append(f"{'--':>15}")
-                marks.append(ck.check(where, None, f"{want_m}+-{want_s}", 3))
+                marks.append(ck.check(where, None, f"{want_m}+-{want_s}", 3,
+                                      released=key not in NOT_RELEASED))
                 continue
             ok = not why.get((key, task))
             marks.append(ck.check(where + " mean", c["mean"], want_m, 3, scored=ok))
@@ -828,7 +823,8 @@ def print_table3_9(cells, ck, out, why, tol_subject=None):
             want = EXPECTED_T9[(key, task)].split()
             if c is None:
                 out(f"{label:<24}  --")
-                ck.check(f"T9 {label} Task {TASK_LABEL[task]}", None, " ".join(want), 3)
+                ck.check(f"T9 {label} Task {TASK_LABEL[task]}", None, " ".join(want), 3,
+                         released=key not in NOT_RELEASED)
                 continue
             ok = not why.get((key, task))
             vals, marks = [], []
@@ -994,14 +990,14 @@ def main(argv=None):
     print_table3_9(cells, ck, out, why, a.tol_subject_max)
     null = load_null(a.cells)
     if null or not fresh:
-        # The paper quotes the null once, as "at least 0.53": both cohort means at 2 dp.
+        # The paper quotes the null once, as "≈0.53": both cohort means at 2 dp.
         marks = [] if fresh else [
             ck.check(f"oracle null Task {TASK_LABEL[t]}", null.get(t), EXPECTED_NULL, 2)
             for t in TASKS]
         out("\nOracle permutation null (max over electrodes of a label-permuted 1-D "
             "high-gamma probe; a lower bound for the fitted probes), cohort mean: "
             + ", ".join(f"Task {TASK_LABEL[t]} {null[t]:.4f}" for t in TASKS if t in null)
-            + f"  (paper: at least {EXPECTED_NULL}, both at 2 dp)" + "".join(marks))
+            + f"  (paper: ≈{EXPECTED_NULL}, Table 9 caption; both at 2 dp)" + "".join(marks))
     other = sorted(k for k in cells if k[0] not in EXPECTED_T20)
     if other:
         out("\nOther cells (settings outside the paper tables; not compared):")
@@ -1033,7 +1029,7 @@ def main(argv=None):
         out(f"{len(ck.missing)} not in {where_cells}.")
     if ck.unreleased:
         out(f"{len(ck.unreleased)} from runners not in this release (raw spectral probes; "
-            "BrainBERT and Brant head-only / LoRA / full fine-tune).")
+            "from-scratch decoders; BrainBERT and Brant head-only / LoRA / full fine-tune).")
     out(f"{n_sm} seeds compared with the same seed in {a.reference}: "
         f"{len(sm_bad)} outside tolerance.")
     if n_seedlike:

@@ -14,7 +14,7 @@
 #
 # ONLY_TABLE1=1 runs just the three Table 1 cells (BrainBERT and PopT temporal
 # head per subject, Brant per subject). RUN_BB_FT_POOLED=1 adds pooled
-# BrainBERT fine-tuning, a cell Table 19 does not report (see its block below);
+# BrainBERT fine-tuning, a Table 19 cell from an incomplete run (see below);
 # it needs more than 32 GB of GPU memory.
 #
 # Arguments. With none, or only --device cuda|auto and --data_root DIR, this is
@@ -234,11 +234,9 @@ for SEED in 42 0 1; do
       --train_mode pooled --seed "$SEED" --epochs 60 --early_stop_patience 20 --use_amp
 done
 
-# Pooled BrainBERT fine-tuning: Table 19 prints "---" here, because the run is
-# incomplete. Only the seed-42 run (r = 0.039) was archived; the authors'
-# revision notes give seeds 0 and 1 as 0.030 and 0.036, from cluster runs
-# whose outputs were never retrieved. RUN_BB_FT_POOLED=1 re-runs all three
-# seeds, should the cell be restored. Needs more than 32 GB of GPU memory.
+# Pooled BrainBERT fine-tuning (Table 19 prints 0.035 from an incomplete run;
+# only seed 42, r = 0.039, is archived). Off by default: RUN_BB_FT_POOLED=1
+# runs all three seeds. Needs more than 32 GB of GPU memory.
 if [[ "${RUN_BB_FT_POOLED:-0}" == 1 ]]; then
   for SEED in 42 0 1; do
     reg "$OUT/ft/Stanford/brainbert/pooled/seed$SEED" \

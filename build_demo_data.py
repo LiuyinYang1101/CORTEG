@@ -43,9 +43,8 @@ Ghent speech envelope (private data, n=16, shown for visualisation only):
   run-to-run noise.
 
 Not shown: PLS and the Ghent Ridge. Table 1's Stanford PLS is transcribed from
-Sun et al. and its Ghent PLS run saved no predictions; the simplified local
-re-runs an earlier version of this demo showed (0.276 / 0.108) matched no paper
-row. Table 1's Ghent Ridge is scored continuously over every time point, not on
+Sun et al. and its Ghent PLS run saved no predictions, and a simplified local
+re-run (0.276 / 0.108) matches no paper row. Table 1's Ghent Ridge is scored continuously over every time point, not on
 the windowed test split the demo plots.
 
 Nothing is written unless every check passes. Every configured row must load

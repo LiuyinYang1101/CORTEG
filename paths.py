@@ -1,9 +1,10 @@
 """
 Centralised path resolution for CORTEG.
 
-Uses environment variables with sensible local defaults so that:
-  - Local runs need zero configuration (defaults point to ~/workspace/...)
-  - HPC runs set env vars in the SLURM script header
+Each root is read from an environment variable (CORTEG_*, with the ECOG_*
+names accepted as aliases) and falls back to a default under the home
+directory, so a run needs no configuration once the defaults fit, and a
+cluster job only has to export the variables.
 
 Priority: CLI arg (--data_root etc.) > env var > local default.
 """

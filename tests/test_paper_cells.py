@@ -109,11 +109,11 @@ class TestBrainTreebankCells(unittest.TestCase):
         self.assertEqual(code, 0, out[-3000:])
         # 256 table cells + the oracle null, Task A and B
         self.assertIn("258 cells checked against the paper: all match.", out)
-        self.assertIn("Task A 0.5297, Task B 0.5284  (paper: at least 0.53", out)
+        self.assertIn("Task A 0.5297, Task B 0.5284  (paper: ≈0.53", out)
         self.assertNotIn("Other cells", out)       # no paper file trips a recipe tag
 
     def test_the_oracle_null_is_checked(self):
-        """The paper quotes the null as 'at least 0.53'; both cohort means must
+        """The paper quotes the null as "≈0.53"; both cohort means must
         round to it, and a changed null file fails the default run."""
         with tempfile.TemporaryDirectory() as d:
             shutil.copytree(BTB, Path(d) / "btb")
@@ -330,49 +330,6 @@ class TestBrainTreebankCells(unittest.TestCase):
         self.assertEqual([r.row for r in agg_btb.classify("f", fm)],
                          ["bb_single_max[trial=trial000]"])
 
-    def test_decoder_training_mode_and_subjects_get_their_own_row(self):
-        """experiments/run_btb_baselines.py records train_mode and subjects; the paper
-        decoder files record neither (pooled, paper order). A per-subject run or a
-        subject subset is another experiment: it must not be scored as the pooled
-        row, nor collide with it when written into the same folder."""
-        def public(seed, mode="pooled", subjects=None, shift=0.0):
-            name = f"results_pooled_sentence_onset_s{seed}.json"
-            src = json.loads((BTB / "base_HiLoFuseNet" / name).read_text(encoding="utf-8"))
-            subjects = list(agg_btb.PAPER_SUBJECT_ORDER) if subjects is None else subjects
-            return {"decoder": "HiLoFuseNet", "endpoint": "sentence_onset", "seed": seed,
-                    "event_seed": 42, "train_mode": mode, "neg_mode": None,
-                    "nonpaper_settings": [], "subjects": subjects,
-                    "per_subject_auroc": {s: src["per_subject_auroc"][s] + shift
-                                          for s in subjects},
-                    "folds": 4, "val_frac": 0.15, "splits": src["splits"], "loss": "bce",
-                    "hp": dict(src["hp"], patience=10),
-                    "features": {"win_sec": 1.5, "pre_sec": 0.0, "hga_band": [70.0, 200.0],
-                                 "max_per_class": 900, "neg_mode": None}}
-        rows = {name: [r.row for r in agg_btb.classify("x", d)] for name, d in {
-            "pooled": public(42),
-            "per_subject": public(42, "per_subject", shift=0.02),
-            "subset": public(42, subjects=["sub_1", "sub_2"]),
-            "order": public(42, subjects=[f"sub_{i}" for i in range(1, 11)]),
-        }.items()}
-        self.assertEqual(rows, {"pooled": ["hilofusenet"],
-                                "per_subject": ["hilofusenet[per_subject]"],
-                                "subset": ["hilofusenet[subj1-2]"],
-                                "order": ["hilofusenet[subj1-2-3-4-5-6-7-8-9-10]"]})
-        with tempfile.TemporaryDirectory() as d:
-            # one folder, as the runner writes it: the pooled seeds, the per-subject
-            # seeds (scores moved by +0.02) and a two-subject smoke run
-            for seed in (42, 1, 2):
-                for mode, shift in (("pooled", 0.0), ("per_subject", 0.02)):
-                    (Path(d) / f"results_{mode}_sentence_onset_s{seed}.json").write_text(
-                        json.dumps(public(seed, mode, shift=shift)), encoding="utf-8")
-            (Path(d) / "results_pooled_sentence_onset_s42_subj1-2.json").write_text(
-                json.dumps(public(42, subjects=["sub_1", "sub_2"])), encoding="utf-8")
-            code, out = run(agg_btb, "--cells", d)
-        self.assertEqual(code, 0, out[-3000:])
-        self.assertRegex(out, r"\nHiLoFuseNet +0\.533\+-0\.022 ")
-        self.assertRegex(out, r"  hilofusenet\[per_subject\] +Task A  0\.5530\+-0\.0220")
-        self.assertIn("  hilofusenet[subj1-2] ", out)
-
     def test_the_same_cell_in_two_files_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             _public_btb_run(Path(d) / "a.json", 42, {"sub_1": 0.6, "sub_2": 0.7}, 42)
@@ -494,7 +451,8 @@ class TestBrainTreebankCells(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             shutil.copy(BTB / GATE_B_S42, d)
             _, out = run(agg_btb, "--cells", d)
-        self.assertIn("18 from runners not in this release", out)
+        # 12 arms x 2 tasks in Table 20, plus HiLoFuseNet in Tables 3 and 9 (2 + 2)
+        self.assertIn("28 from runners not in this release", out)
         self.assertEqual(out.count("(runner not released)"), len(agg_btb.NOT_RELEASED))
 
 
@@ -533,10 +491,14 @@ class TestFmRegressionCells(unittest.TestCase):
                 self.assertFalse(c["ragged"])
                 self.assertEqual(c["seeds"], list(agg_fm.paper_seeds(key)))
 
-    def test_withdrawn_cells_are_not_shipped(self):
+    def test_incomplete_runs_are_not_shipped(self):
+        """The two Table 19 cells printed from incomplete runs have no artifacts here."""
         self.assertFalse((FM / "ft" / "Stanford" / "brainbert" / "pooled").exists())
         self.assertFalse((FM / "ft" / "Ghent" / "brainbert" / "loo").exists())
-        for ds, rg, fm, ad in agg_fm.WITHDRAWN:
+        self.assertEqual({k: v[0] for k, v in agg_fm.NOT_IN_CELLS.items()},
+                         {("Stanford", "pooled", "brainbert", "ft"): "0.035",
+                          ("Ghent", "loo", "brainbert", "ft"): "0.043"})
+        for ds, rg, fm, ad in agg_fm.NOT_IN_CELLS:
             self.assertNotIn((ad, ds, fm, rg), self.cells)
             self.assertIsNone(agg_fm.EXPECTED_T19[(ds, rg)][agg_fm.T19_COLS.index((fm, ad))])
         self.assertEqual(self.incomplete, [])
@@ -546,6 +508,7 @@ class TestFmRegressionCells(unittest.TestCase):
         self.assertEqual(f"{c['mean']:.4f}", "0.0125")      # a 4-dp detour would give 0.013
         self.assertEqual(f"{c['mean']:.3f}", "0.012")       # ... the exact value is 0.012
         self.assertEqual(agg_fm.EXPECTED_T19[("Ghent", "loo")][3], "0.012")
+        self.assertEqual(agg_fm.PRINTED_AS[("Ghent", "loo", "popt", "ft")][0], "0.013")
 
     def test_loo_summaries_agree_with_their_folds(self):
         """_loo_done.json is what counts; its per-subject r must be the r its

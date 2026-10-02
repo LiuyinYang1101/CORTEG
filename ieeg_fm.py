@@ -61,7 +61,7 @@ def _env_path(name: str, what: str) -> str:
             f"{what} is not available.\n"
             f"  Set ${name} to your own copy — this repository does not\n"
             f"  redistribute third-party code or weights. See the Intracranial\n"
-            f"  foundation models section of README.md for the download sources.\n"
+            f"  foundation models section of REPRODUCING.md for the download sources.\n"
             f"  Currently: ${name}={p!r}")
     return p
 
@@ -159,18 +159,6 @@ def brant_weights_dir() -> str:
     """
     return _env_path("BRANT_WEIGHTS", "The Brant weights directory "
                                       "(time_encoder.pt + channel_encoder.pt)")
-
-
-def _ensure_repo_on_path() -> None:
-    r = brainbert_repo()
-    if r not in sys.path:
-        sys.path.insert(0, r)
-
-
-def _ensure_popt_on_path() -> None:
-    for r in (popt_repo(), brainbert_repo()):
-        if r not in sys.path:
-            sys.path.insert(0, r)
 
 
 def _notch_filter(x: np.ndarray, fs: float, freqs=_NOTCH_FREQS, Q: int = 30) -> np.ndarray:
@@ -420,9 +408,9 @@ def brainbert_embeddings(
     The model is frozen and run under torch.no_grad().
 
     Memory. Each forward batch is pooled as soon as it comes back, and the
-    spectrograms are built one window at a time as the batches need them. The
-    earlier version kept every unpooled (N*C, T_frames, 768) output and then
-    concatenated it, twice that at peak: ~390 GB for the largest BrainTreebank
+    spectrograms are built one window at a time as the batches need them.
+    Keeping every unpooled (N*C, T_frames, 768) output and concatenating it
+    would need twice that at peak: ~390 GB for the largest BrainTreebank
     subject on Task B, where the pooled result is ~1 GB. The batches, their
     order and the numpy float32 pooling are unchanged, so the output is
     bit-identical to pooling after concatenation (tests/test_btb_fm.py checks

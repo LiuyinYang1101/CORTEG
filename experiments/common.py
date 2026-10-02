@@ -5,7 +5,6 @@ Provides helpers used across multiple training entry points:
   - reproducibility (set_seed, seed_worker)
   - multi-loader evaluation (evaluate_multi_loader)
   - result formatting (format_subject_table)
-  - model saving (save_merged_model, save_test_trajectories)
   - config parsing (safe_parse_model_kwargs)
 """
 from __future__ import annotations
@@ -20,7 +19,6 @@ import torch.nn as nn
 
 from train.engine import evaluate
 from models.steegformer.pretrained import parse_model_kwargs as _parse_model_kwargs
-from paths import get_data_root, get_output_root
 
 # Default subject list for the Stanford ECoG dataset
 STANFORD_SUBJECTS: List[str] = ["bp", "cc", "ht", "jc", "jp", "mv", "wc", "wm", "zt"]
@@ -135,86 +133,6 @@ def format_subject_table(
         )
     lines.append(f"SCORE = {val_report['score']:.4f}")
     return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# Model saving
-# ---------------------------------------------------------------------------
-
-def save_merged_model(
-    model: nn.Module,
-    save_path: str,
-    lora_r: int = 0,
-    lora_alpha: int = 0,
-) -> None:
-    """Merge LoRA adapters into base weights and save the state dict.
-
-    If ``lora_r > 0``, the LoRA update ``(B @ A) * (alpha / r)`` is added
-    to each adapted weight matrix and the adapter attributes are removed so
-    the saved checkpoint is a standard dense model.
-
-    Args:
-        model: The model to save (modified in-place for LoRA merging).
-        save_path: Destination ``.pth`` file path.
-        lora_r: LoRA rank used during training (0 = no LoRA).
-        lora_alpha: LoRA alpha scaling factor.
-    """
-    model.eval()
-    if lora_r > 0:
-        scaling = lora_alpha / lora_r
-        print(f"Merging LoRA weights (scaling={scaling:.2f}) before saving...")
-        with torch.no_grad():
-            for _name, module in model.named_modules():
-                if hasattr(module, "lora_A") and hasattr(module, "lora_B") and hasattr(module, "weight"):
-                    module.weight.add_((module.lora_B @ module.lora_A) * scaling)
-                    delattr(module, "lora_A")
-                    delattr(module, "lora_B")
-                    if hasattr(module, "lora_dropout"):
-                        delattr(module, "lora_dropout")
-                    if hasattr(module, "scaling"):
-                        delattr(module, "scaling")
-    torch.save(model.state_dict(), save_path)
-    print(f"Model saved to: {save_path}")
-
-
-def save_test_trajectories(
-    model: nn.Module,
-    loaders,
-    subjects: List[str],
-    step_fn,
-    device: torch.device,
-    save_path: str,
-) -> None:
-    """Run inference on test loaders and save predicted/true trajectories.
-
-    Saves a compressed ``.npz`` file with keys ``{subject}_pred`` and
-    ``{subject}_true`` for each subject.
-
-    Args:
-        model: Trained model.
-        loaders: List of test DataLoaders, one per subject.
-        subjects: Subject name strings (indexed by loader position).
-        step_fn: Callable(model, batch) → dict with 'y_hat'.
-        device: Target device.
-        save_path: Destination ``.npz`` file path.
-    """
-    model.eval()
-    results: Dict[str, np.ndarray] = {}
-    print(f"Generating test trajectories for {len(loaders)} subjects...")
-    with torch.no_grad():
-        for i, loader in enumerate(loaders):
-            sub_name = subjects[i] if i < len(subjects) else f"sub_{i}"
-            preds, trues = [], []
-            for batch in loader:
-                batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-                out = step_fn(model, batch)
-                preds.append(out["y_hat"].cpu().numpy())
-                trues.append(batch["y"].cpu().numpy())
-            if preds:
-                results[f"{sub_name}_pred"] = np.concatenate(preds, axis=0)
-                results[f"{sub_name}_true"] = np.concatenate(trues, axis=0)
-    np.savez_compressed(save_path, **results)
-    print(f"Trajectories saved to: {save_path}")
 
 
 # ---------------------------------------------------------------------------

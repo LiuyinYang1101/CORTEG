@@ -367,12 +367,6 @@ def load_subject(subj: str, args) -> dict:
             "fs": float(fs), "trial": trial}
 
 
-def subject_embeddings(subj: str, args):
-    """(embeddings, labels, event_times) for one subject; see load_subject."""
-    d = load_subject(subj, args)
-    return d["emb"], d["y"], d["event_times"]
-
-
 def probe_auroc(x_tr, y_tr, x_te, y_te, seed):
     """One logistic probe, as the published arms used.
 

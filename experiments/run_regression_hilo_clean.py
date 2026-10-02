@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 # experiments/run_regression_hilo_clean.py
-"""Runner for Hi-Lo merge-strategy experiments.
+"""CORTEG runner for Stanford finger-trajectory regression (Table 1).
 
-Supports MSE loss with optional SPVAE auxiliary loss (KL + agreement).
-Merge strategies: average (fixed fusion at layer k) and layerwise_gate (gated fusion).
+Train modes (--train_mode):
+  pooled       one model trained on all subjects (or all but --exclude_subjects,
+               which gives the Stage 1 of leave-one-out fine-tuning, LOO-FT)
+  finetune     Stage 2 of LOO-FT: load a pooled checkpoint (--finetune_from) and
+               adapt it per held-out subject (--finetune_subjects/--finetune_modules)
+  per_subject  one model per subject
+
+The model is a frozen ST-EEGFormer backbone with LoRA in the last blocks, a
+high-gamma token stream merged by --merge_strategy (average or layerwise_gate)
+and an electrode-coordinate channel adapter (--channel_adapter). Loss is MSE on
+z-scored finger trajectories.
 """
 from __future__ import annotations
 
@@ -32,6 +41,7 @@ from train.lr_schedule import WarmupCosineLR
 from train.utils import log_detailed_trainable
 
 from experiments.common import (
+    STANFORD_SUBJECTS,
     set_seed, seed_worker,
     format_subject_table,
     evaluate_multi_loader,
@@ -41,11 +51,10 @@ from train.sampling import SubjectInterleavedSampler
 
 from models.steegformer.pretrained import load_pretrained_with_report
 from models.steegformer.steegformer_hilo_clean import (
-    hilo_clean_small, hilo_clean_base, hilo_clean_large,
     HiLoCleanBackbone, HiLoCleanRegressor,
 )
 from models.steegformer.probe import configure_lora_lastn_probe, set_requires_grad
-from models.steegformer.lora import inject_switchable_lora_blocks, SwitchableLoRALinear, LoRALinear
+from models.steegformer.lora import LoRALinear
 
 
 # ============================================================
@@ -143,8 +152,6 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
         arch_defaults["patch_size"] = hi_ps
         print(f"  hi_only mode: overriding lo patch_size → {hi_ps}", flush=True)
 
-    # If using full codebook (e.g. HBN 256 slots), set max_ch_idx=256
-    _max_ch_idx = 256 if bool(getattr(args, "use_full_codebook", False)) else 145
     backbone = HiLoCleanBackbone(
         **arch_defaults,
         expect_num_chans=C_in,
@@ -154,7 +161,6 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
         layerwise_gate_bottleneck=int(getattr(args, "layerwise_gate_bottleneck", 16)),
         layerwise_gate_act=str(getattr(args, "layerwise_gate_act", "tanh")),
         layerwise_gate_share_blocks=bool(getattr(args, "layerwise_gate_share_blocks", False)),
-        max_ch_idx=_max_ch_idx,
         **backbone_kwargs,
     )
 
@@ -207,13 +213,8 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
         if ecog_xyz_m is not None:
             _xyz_m_tensor = torch.from_numpy(ecog_xyz_m / 1000.0).float()  # mm → meters
         backbone.attach_channel_adapter(
-            adapter_type, M=int(args.M_EEG), hidden=int(args.fuser_hidden),
-            ecog_xyz_m=_xyz_m_tensor,
-            knn_k=int(getattr(args, "knn_k", 8)),
-            knn_sigma=getattr(args, "knn_sigma", None),
-            use_full_table=bool(getattr(args, "use_full_codebook", False)),
-        )
-        print(f"  channel_adapter={adapter_type} attached (M={args.M_EEG}, hidden={args.fuser_hidden})", flush=True)
+            adapter_type, ecog_xyz_m=_xyz_m_tensor, knn_k=int(getattr(args, "knn_k", 8)))
+        print(f"  channel_adapter={adapter_type} attached", flush=True)
 
         # Adapter branch ablation: disable one branch after construction
         if args.adapter_branch != "both" and hasattr(backbone, "channel_adapter"):
@@ -224,28 +225,19 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
                     for p in ca.residual.parameters():
                         p.data.zero_()
                         p.requires_grad = False
-                    print(f"  [adapter_branch=soft_only] Fourier residual zeroed & frozen")
+                    print("  [adapter_branch=soft_only] Fourier residual zeroed & frozen")
                 elif args.adapter_branch == "fourier_only":
                     ca.soft.scale.data.zero_()
                     ca.soft.scale.requires_grad = False
                     for p in ca.soft.net.parameters():
                         p.requires_grad = False
-                    print(f"  [adapter_branch=fourier_only] Soft branch zeroed & frozen")
-
-    elif getattr(args, "use_ecog_fuser", False):
-        # Legacy path: use old ecog_fuser directly
-        backbone.attach_ecog_fuser_from_channel_embed(
-            M=int(args.M_EEG), hidden=int(args.fuser_hidden),
-        )
-        print(f"  ecog_fuser attached (M={args.M_EEG}, hidden={args.fuser_hidden})", flush=True)
+                    print("  [adapter_branch=fourier_only] Soft branch zeroed & frozen")
 
     model = HiLoCleanRegressor(
         backbone=backbone,
         d_out=d_out,
-        token_mode="mean",
         include_cls=True,
         head_dropout=float(args.head_dropout),
-        head_hidden=int(getattr(args, "head_hidden", 0)),
     )
 
     # Build the readout NOW, before any optimizer is constructed. It is otherwise
@@ -276,7 +268,7 @@ def build_model(args, C_in: int, T_in: int, ecog_xyz_m: Optional[np.ndarray] = N
     if getattr(args, "freeze_readout", False):
         return model
     _embed = getattr(backbone, "embed_dim", None)
-    if _embed is not None and getattr(model.head, "token_mode", "") in ("cls", "mean"):
+    if _embed is not None:
         model.head.materialize_head(embed_dim=int(_embed))
     return model
 
@@ -300,23 +292,21 @@ def unfreeze_merge_params(model: nn.Module):
         if mod is not None:
             for p in mod.parameters():
                 p.requires_grad = True
-    # Always unfreeze channel adapter / ecog fuser if present
-    for attr in ("channel_adapter", "ecog_fuser"):
-        mod = getattr(b, attr, None)
-        if mod is not None:
-            for p in mod.parameters():
-                p.requires_grad = True
-def configure_finetune_modules(model: nn.Module, modules: list, lora_last_n: int,
-                               lora_targets: tuple = ("qkv", "proj", "fc1", "fc2")):
+    # Always unfreeze the spatial adapter if present
+    mod = getattr(b, "channel_adapter", None)
+    if mod is not None:
+        for p in mod.parameters():
+            p.requires_grad = True
+
+
+def configure_finetune_modules(model: nn.Module, modules: list, lora_last_n: int):
     """Freeze all, then selectively unfreeze specified module groups for stage-2 finetuning.
 
     modules: list of strings from {"head", "ln", "lora", "adapter"}.
         head    — regression head
         ln      — LayerNorms in LoRA blocks
         lora    — LoRA A/B weights + LayerNorms in LoRA blocks
-        adapter — channel adapter (e.g. KNN Fourier residual)
-    lora_targets: which LoRA modules to unfreeze (e.g. ("qkv",) for minimal adaptation).
-        Only LoRALinear modules whose attribute name matches a target are unfrozen.
+        adapter — spatial (channel) adapter
     """
     set_requires_grad(model, False)
 
@@ -340,24 +330,14 @@ def configure_finetune_modules(model: nn.Module, modules: list, lora_last_n: int
     if "lora" in modules:
         for bi in range(start, depth):
             for name, m in blocks[bi].named_modules():
-                if isinstance(m, LoRALinear) and any(t in name for t in lora_targets):
+                if isinstance(m, LoRALinear):
                     m.A.weight.requires_grad = True
                     m.B.weight.requires_grad = True
 
     if "adapter" in modules:
-        for attr in ("channel_adapter", "ecog_fuser"):
-            mod = getattr(backbone, attr, None)
-            if mod is not None:
-                set_requires_grad(mod, True)
-
-    if "hi" in modules:
-        for attr in ("patch_embed_hi", "hi_scale"):
-            mod = getattr(backbone, attr, None)
-            if mod is not None:
-                if isinstance(mod, nn.Parameter):
-                    mod.requires_grad = True
-                else:
-                    set_requires_grad(mod, True)
+        mod = getattr(backbone, "channel_adapter", None)
+        if mod is not None:
+            set_requires_grad(mod, True)
 
 
 def save_predictions(model, loader, save_dir, device, use_amp=True, stream="both"):
@@ -425,8 +405,6 @@ def main():
     p.add_argument("--steegformer_variant", type=str, default="small")
     p.add_argument("--model_kwargs_json", type=str, default="")
     p.add_argument("--head_dropout", type=float, default=0.0)
-    p.add_argument("--head_hidden", type=int, default=0,
-                    help="Hidden dim for 2-layer MLP head (0 = single linear)")
     p.add_argument("--freeze_readout", action="store_true",
                     help="Leave the linear readout at its random initialisation, as in "
                          "the paper's Stanford runs (Table 1 pooled, LOO-FT Stage 1): the "
@@ -441,8 +419,6 @@ def main():
                          "it, so this is how to get the corrected behaviour from them "
                          "without editing them. In finetune mode --finetune_modules "
                          "decides, and the flag only cancels --freeze_readout.")
-
-    # Input regularization
 
     # LoRA
     p.add_argument("--lora_last_n", type=int, default=4)
@@ -470,23 +446,10 @@ def main():
                     help="Which stream(s) to use: both (default), lo_only, hi_only")
 
     # ECoG channel adapter
-    p.add_argument("--use_ecog_fuser", action="store_true")
     p.add_argument("--channel_adapter", type=str, default="none",
-                    choices=["none", "original", "zero_mlp", "additive_mlp",
-                             "fourier_add", "subspace", "soft_lookup_add", "coord_pe",
-                             "knn_hard", "knn_fourier", "knn_soft", "knn_soft_fourier",
-                             "gp_hard", "gp_fourier"],
-                    help="Channel adaptation method (requires --use_ecog_fuser for xyz data)")
-    p.add_argument("--M_EEG", type=int, default=145,
-                    help="Size of the pretrained EEG electrode codebook")
-    p.add_argument("--fuser_hidden", type=int, default=128,
-                    help="Hidden width of the spatial adapter")
+                    choices=["none", "knn_soft_fourier"],
+                    help="Channel adaptation method; knn_soft_fourier is CORTEG's spatial adapter")
     p.add_argument("--knn_k", type=int, default=8, help="Number of nearest EEG neighbours for KNN adapters")
-    p.add_argument("--use_full_codebook", action="store_true",
-                    help="Use the full EEG embedding table (e.g. 256 slots for HBN) in KNNSoft adapter, instead of capping at 142 positioned channels")
-    p.add_argument("--knn_sigma", type=float, default=None, help="Gaussian bandwidth for KNN (None=auto)")
-
-    # SPVAE latent router
 
     # Transfer ablation controls
     p.add_argument("--no_pretrained", action="store_true",
@@ -502,8 +465,6 @@ def main():
                     help="Adapter branch ablation: both=full adapter, soft_only=disable Fourier "
                          "residual, fourier_only=disable soft lookup")
 
-    # Euclidean Alignment preprocessing
-
     # Stage-2 finetuning (Empirical Bayes: pooled LOO → per-subject adaptation)
     p.add_argument("--exclude_subjects", type=str, default="",
                     help="Comma-separated subjects to EXCLUDE from pooled training (LOO for stage-2)")
@@ -513,15 +474,10 @@ def main():
                     help="Comma-separated modules to unfreeze: head,ln,lora,adapter")
     p.add_argument("--finetune_subjects", type=str, default="",
                     help="Comma-separated subjects for finetuning (empty = all)")
-    p.add_argument("--finetune_lora_targets", type=str, default="qkv,proj,fc1,fc2",
-                    help="Which LoRA modules to unfreeze in stage-2 (e.g. 'qkv' for minimal)")
     p.add_argument("--finetune_lr_lora", type=float, default=0.0,
                     help="Separate LR for LoRA params in stage-2 (0=use main --lr)")
     p.add_argument("--finetune_lr_adapter", type=float, default=0.0,
                     help="Separate LR for adapter params in stage-2 (0=use main --lr)")
-    p.add_argument("--finetune_token_mode", type=str, default="",
-                    choices=["", "mean", "flatten", "cls"],
-                    help="Override token pooling mode for stage-2 head (empty=keep original)")
 
     # Misc
     p.add_argument("--save_root", type=str,
@@ -529,8 +485,6 @@ def main():
                         os.environ.get("CORTEG_OUTPUT_ROOT",
                                        os.path.expanduser("~/workspace/outputs/corteg")),
                         "default_run"))
-    p.add_argument("--save_ckpt_path", type=str, default="",
-                    help="Save best model state_dict to this path after training")
 
     args = p.parse_args()
     if args.train_readout:
@@ -545,7 +499,7 @@ def main():
     os.makedirs(args.save_root, exist_ok=True)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    need_xyz = bool(args.use_ecog_fuser) or (args.channel_adapter != "none")
+    need_xyz = args.channel_adapter != "none"
     print(
         f"device={device} dataset={args.dataset} stream={args.stream} "
         f"merge_strategy={args.merge_strategy} "
@@ -557,93 +511,83 @@ def main():
 
     step_fn = make_step_fn(stream=args.stream)
 
-    # ---- Dataset-specific data loading ----
-    if True:
-        # Stanford finger trajectory: pre-epoched pickle format
-        d_out = 5
-        datasets_meta = {
-            "Stanford": {
-                "subjects": ["bp", "cc", "ht", "jc", "jp", "mv", "wc", "wm", "zt"],
-                "path": get_data_root(),
-            },
-        }
-        subjects = datasets_meta[args.dataset]["subjects"]
-        file_root = args.data_root if args.data_root else datasets_meta[args.dataset]["path"]
+    # ---- Data loading (Stanford finger trajectories, pre-epoched pickles) ----
+    d_out = 5
+    subjects = list(STANFORD_SUBJECTS)
+    file_root = args.data_root if args.data_root else get_data_root()
 
-        split = TailSplit(val_ratio=float(args.val_ratio))
+    split = TailSplit(val_ratio=float(args.val_ratio))
 
-        subj_data, xyz_mm = [], []
-        for sub in subjects:
-            sd = load_subject(file_root, sub, require_xyz=need_xyz)
-            subj_data.append(sd)
-            xyz_mm.append(sd.ecog_xyz_mm)
+    subj_data, xyz_mm = [], []
+    for sub in subjects:
+        sd = load_subject(file_root, sub, require_xyz=need_xyz)
+        subj_data.append(sd)
+        xyz_mm.append(sd.ecog_xyz_mm)
 
-        # Geometry ablation: transform XYZ before building the adapter
-        if args.xyz_mode != "real" and need_xyz:
-            rng_xyz = np.random.RandomState(args.seed)
-            for i in range(len(xyz_mm)):
-                if xyz_mm[i] is None:
-                    continue
-                C = xyz_mm[i].shape[0]
-                if args.xyz_mode == "shuffled":
-                    perm = rng_xyz.permutation(C)
-                    xyz_mm[i] = xyz_mm[i][perm]
-                elif args.xyz_mode == "zero":
-                    xyz_mm[i] = np.zeros_like(xyz_mm[i])
-                elif args.xyz_mode == "random":
-                    lo = xyz_mm[i].min(axis=0)
-                    hi = xyz_mm[i].max(axis=0)
-                    xyz_mm[i] = rng_xyz.uniform(lo, hi, size=(C, 3)).astype(np.float32)
-            print(f"  [xyz_mode={args.xyz_mode}] XYZ coordinates transformed")
+    # Geometry ablation: transform XYZ before building the adapter
+    if args.xyz_mode != "real" and need_xyz:
+        rng_xyz = np.random.RandomState(args.seed)
+        for i in range(len(xyz_mm)):
+            if xyz_mm[i] is None:
+                continue
+            C = xyz_mm[i].shape[0]
+            if args.xyz_mode == "shuffled":
+                perm = rng_xyz.permutation(C)
+                xyz_mm[i] = xyz_mm[i][perm]
+            elif args.xyz_mode == "zero":
+                xyz_mm[i] = np.zeros_like(xyz_mm[i])
+            elif args.xyz_mode == "random":
+                lo = xyz_mm[i].min(axis=0)
+                hi = xyz_mm[i].max(axis=0)
+                xyz_mm[i] = rng_xyz.uniform(lo, hi, size=(C, 3)).astype(np.float32)
+        print(f"  [xyz_mode={args.xyz_mode}] XYZ coordinates transformed")
 
-        xyz_bank = SubjectXYZBank.from_mm(xyz_mm) if need_xyz else None
-        collate_fn = make_collate_fn(xyz_bank)
+    xyz_bank = SubjectXYZBank.from_mm(xyz_mm) if need_xyz else None
+    collate_fn = make_collate_fn(xyz_bank)
 
-        tr_list, va_list, te_list, shapes_by_sid = [], [], [], []
-        for sid, sd in enumerate(subj_data):
-            n = int(sd.y_tr.shape[0])
-            idx_tr, idx_val = split.split(n)
+    tr_list, va_list, te_list, shapes_by_sid = [], [], [], []
+    for sid, sd in enumerate(subj_data):
+        n = int(sd.y_tr.shape[0])
+        idx_tr, idx_val = split.split(n)
 
-            y_stats = fit_zscore_2d(sd.y_tr[idx_tr])
-            y_tr = apply_zscore_2d(sd.y_tr[idx_tr], y_stats)
-            y_val = apply_zscore_2d(sd.y_tr[idx_val], y_stats)
-            y_te = apply_zscore_2d(sd.y_te, y_stats)
+        y_stats = fit_zscore_2d(sd.y_tr[idx_tr])
+        y_tr = apply_zscore_2d(sd.y_tr[idx_tr], y_stats)
+        y_val = apply_zscore_2d(sd.y_tr[idx_val], y_stats)
+        y_te = apply_zscore_2d(sd.y_te, y_stats)
 
-            x_raw_tr0, x_raw_val0 = sd.X_raw_tr[idx_tr], sd.X_raw_tr[idx_val]
-            x_hi_tr0, x_hi_val0 = sd.X_feat_tr[idx_tr][..., 0], sd.X_feat_tr[idx_val][..., 0]
+        x_raw_tr0, x_raw_val0 = sd.X_raw_tr[idx_tr], sd.X_raw_tr[idx_val]
+        x_hi_tr0, x_hi_val0 = sd.X_feat_tr[idx_tr][..., 0], sd.X_feat_tr[idx_val][..., 0]
 
-            raw_stats = fit_zscore_3d_per_channel(x_raw_tr0)
-            hi_stats = fit_zscore_3d_per_channel(x_hi_tr0)
+        raw_stats = fit_zscore_3d_per_channel(x_raw_tr0)
+        hi_stats = fit_zscore_3d_per_channel(x_hi_tr0)
 
-            x_tr = apply_zscore_3d_per_channel(x_raw_tr0, raw_stats)
-            x_val = apply_zscore_3d_per_channel(x_raw_val0, raw_stats)
-            x_te = apply_zscore_3d_per_channel(sd.X_raw_te, raw_stats)
-            h_tr = apply_zscore_3d_per_channel(x_hi_tr0, hi_stats)
-            h_val = apply_zscore_3d_per_channel(x_hi_val0, hi_stats)
-            h_te = apply_zscore_3d_per_channel(sd.X_feat_te[..., 0], hi_stats)
+        x_tr = apply_zscore_3d_per_channel(x_raw_tr0, raw_stats)
+        x_val = apply_zscore_3d_per_channel(x_raw_val0, raw_stats)
+        x_te = apply_zscore_3d_per_channel(sd.X_raw_te, raw_stats)
+        h_tr = apply_zscore_3d_per_channel(x_hi_tr0, hi_stats)
+        h_val = apply_zscore_3d_per_channel(x_hi_val0, hi_stats)
+        h_te = apply_zscore_3d_per_channel(sd.X_feat_te[..., 0], hi_stats)
 
-            tr_list.append(HiLoAddDataset(x_tr, h_tr, y_tr, sid))
-            va_list.append(HiLoAddDataset(x_val, h_val, y_val, sid))
-            te_list.append(HiLoAddDataset(x_te, h_te, y_te, sid))
-            # For hi_only: model input is x_hi, so track hi temporal dim
-            if args.stream == "hi_only":
-                shapes_by_sid.append((x_tr.shape[1], h_tr.shape[2]))
-            else:
-                shapes_by_sid.append((x_tr.shape[1], x_tr.shape[2]))
+        tr_list.append(HiLoAddDataset(x_tr, h_tr, y_tr, sid))
+        va_list.append(HiLoAddDataset(x_val, h_val, y_val, sid))
+        te_list.append(HiLoAddDataset(x_te, h_te, y_te, sid))
+        # For hi_only: model input is x_hi, so track hi temporal dim
+        if args.stream == "hi_only":
+            shapes_by_sid.append((x_tr.shape[1], h_tr.shape[2]))
+        else:
+            shapes_by_sid.append((x_tr.shape[1], x_tr.shape[2]))
 
-        # Free the raw float64 SubjectData records now that the float32 dataset
-        # tensors (tr_list/va_list/te_list) are built. subj_data is never read
-        # again, but otherwise stays alive in this frame for the whole run and
-        # holds ~27 GB (all subjects, float64) -> drove the OOM that froze the
-        # box (2026-06-19, 2026-06-24). Frees ~27 GB; numerically a no-op.
-        del subj_data
-        import gc
-        gc.collect()
+    # Free the raw float64 SubjectData records now that the float32 dataset
+    # tensors (tr_list/va_list/te_list) are built. subj_data is never read
+    # again but would otherwise stay alive for the whole run, holding ~27 GB
+    # (all subjects, float64). Numerically a no-op.
+    del subj_data
+    import gc
+    gc.collect()
 
     # ---- Pooled Training ----
     if args.train_mode == "pooled":
         set_seed(args.seed)
-        g = torch.Generator().manual_seed(args.seed)
         max_C = max(s[0] for s in shapes_by_sid)
         T0 = shapes_by_sid[0][1]
 
@@ -766,7 +710,7 @@ def main():
         print(f"\nResults saved: {results_path}", flush=True)
         print(f"SCORE = {test['score']:.4f}", flush=True)
 
-        # Save per-subject predictions and representations for manifold analysis
+        # Save per-subject predictions and mean-pooled representations
         for sid_i, ds_te in enumerate(te_list):
             if sid_i not in train_sids and train_sids:
                 continue
@@ -784,13 +728,6 @@ def main():
         torch.save(trainable_state, os.path.join(ckpt_dir, "trainable_weights.pt"))
         print(f"Trainable weights saved: {ckpt_dir}/trainable_weights.pt "
               f"({len(trainable_state)} params)", flush=True)
-
-        # Save full checkpoint if explicitly requested
-        ckpt_path = args.save_ckpt_path
-        if ckpt_path:
-            os.makedirs(os.path.dirname(ckpt_path) or ".", exist_ok=True)
-            torch.save(model.state_dict(), ckpt_path)
-            print(f"  Saved full checkpoint → {ckpt_path}", flush=True)
         return
 
     # ---- Stage-2 Finetune: load pooled checkpoint, per-subject adaptation ----
@@ -832,7 +769,7 @@ def main():
             # (TokenRegressor.head is None until first forward; infer dim from checkpoint)
             ckpt = torch.load(args.finetune_from, map_location=device)
             if model.head.head is None:
-                # Find first weight to infer input dim (works for both Linear and Sequential heads)
+                # Infer the readout's input dim from the checkpoint
                 head_w_key = next(
                     (k for k in ckpt if k.startswith("head.head.") and k.endswith(".weight")),
                     None,
@@ -853,41 +790,9 @@ def main():
             print(f"  Loaded pooled checkpoint (strict=False, {len(mismatched)} skipped)",
                   flush=True)
 
-            # Override token pooling mode for stage-2 (e.g. mean → flatten)
-            if args.finetune_token_mode:
-                old_mode = model.head.token_mode
-                model.head.token_mode = args.finetune_token_mode
-                # Materialize new head immediately: run a dummy forward to get token shape
-                model.eval()
-                sample_batch = next(iter(DataLoader(tr_list[sid], batch_size=2, collate_fn=collate_fn)))
-                with torch.no_grad():
-                    sample_x = sample_batch["x_raw"].to(device)
-                    fwd_kw = {}
-                    if "x_hi" in sample_batch:
-                        fwd_kw["x_hi"] = sample_batch["x_hi"].to(device)
-                    if "ecog_xyz" in sample_batch:
-                        fwd_kw["ecog_xyz"] = sample_batch["ecog_xyz"].to(device)
-                    tokens = model.backbone.forward_tokens(sample_x, **fwd_kw)
-                    if model.head.include_cls:
-                        feat = tokens
-                    else:
-                        feat = tokens[:, 1:, :] if tokens.shape[1] > 1 else tokens
-                    if args.finetune_token_mode in ("cls", "mean"):
-                        in_dim = feat.shape[2]
-                    else:
-                        in_dim = feat.shape[1] * feat.shape[2]
-                model.head.head = model.head._build_head(in_dim, device)
-                print(f"  Token mode: {old_mode} → {args.finetune_token_mode} (head re-init: {in_dim} → {model.head.d_out})", flush=True)
-
             # Freeze all, then selectively unfreeze
-            ft_lora_targets = tuple(
-                t.strip() for t in args.finetune_lora_targets.split(",") if t.strip()
-            )
-            configure_finetune_modules(model, ft_modules, int(args.lora_last_n),
-                                       lora_targets=ft_lora_targets)
+            configure_finetune_modules(model, ft_modules, int(args.lora_last_n))
             log_detailed_trainable(model)
-
-            ft_step_fn = step_fn
 
             # Zero-shot: evaluate pooled checkpoint on this subject before any finetuning
             va_loader = DataLoader(va_list[sid], batch_size=64, collate_fn=collate_fn)
@@ -897,10 +802,9 @@ def main():
             print(f"\n[ZERO-SHOT] subject={sub_name} val={zs_val['score']:.4f} test={zs_test['score']:.4f}", flush=True)
             print(format_subject_table(zs_test, subjects), flush=True)
 
-            # Plan C: differential learning rates per module group
+            # Optional per-group learning rates (LoRA / adapter / rest)
             lr_lora = float(args.finetune_lr_lora) if args.finetune_lr_lora > 0 else args.lr
             lr_adapter = float(args.finetune_lr_adapter) if args.finetune_lr_adapter > 0 else args.lr
-            backbone = getattr(model, "backbone", model)
 
             lora_params, adapter_params, other_params = [], [], []
             for name, param in model.named_parameters():
@@ -908,7 +812,7 @@ def main():
                     continue
                 if ".A.weight" in name or ".B.weight" in name:
                     lora_params.append(param)
-                elif "channel_adapter" in name or "ecog_fuser" in name:
+                elif "channel_adapter" in name:
                     adapter_params.append(param)
                 else:
                     other_params.append(param)
@@ -941,7 +845,7 @@ def main():
             scaler = torch.cuda.amp.GradScaler(enabled=args.use_amp)
 
             for ep in range(args.epochs):
-                tr = train_one_epoch(model, tr_loader, opt, device, cfg=eng_cfg, step_fn=ft_step_fn, scaler=scaler)
+                tr = train_one_epoch(model, tr_loader, opt, device, cfg=eng_cfg, step_fn=step_fn, scaler=scaler)
                 if scheduler:
                     scheduler.step()
                 val = evaluate(model, va_loader, device, step_fn=step_fn, use_amp=args.use_amp)
@@ -1041,7 +945,7 @@ def main():
             if ep % 20 == 0:
                 extra = ""
                 if args.merge_strategy == "layerwise_gate":
-                    gate = model.backbone.get_router_gate_mean()
+                    gate = model.backbone.get_gate_mean()
                     if gate is not None:
                         extra = f" gate={gate:.4f}"
                 print(
@@ -1056,9 +960,9 @@ def main():
 
         # Final gate log
         if args.merge_strategy == "layerwise_gate":
-            gate = model.backbone.get_router_gate_mean()
+            gate = model.backbone.get_gate_mean()
             if gate is not None:
-                print(f"  router gate final = {gate:.4f}", flush=True)
+                print(f"  layerwise gate final = {gate:.4f}", flush=True)
 
         test_result = evaluate(model, te_loader, device, step_fn=step_fn)
         print(format_subject_table(test_result, subjects))
@@ -1072,7 +976,7 @@ def main():
             "n": rec["n"],
         }
 
-        # Save predictions and representations for manifold analysis
+        # Save predictions and mean-pooled representations
         pred_dir = os.path.join(args.save_root, "predictions", sub_name)
         save_predictions(model, te_loader, pred_dir, device, args.use_amp, stream=args.stream)
         print(f"  Predictions saved: {pred_dir}", flush=True)

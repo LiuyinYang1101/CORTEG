@@ -39,9 +39,12 @@ when its ``_loo_done.json`` exists; the per-fold ``ft_<subject>/results_persub.j
 files are never counted on their own, and a LOO directory with folds but no
 ``_loo_done.json`` is reported as incomplete.
 
-The paper does not report two Table 19 cells (Stanford pooled BrainBERT ft,
-Ghent LOO BrainBERT ft; see WITHDRAWN). They are printed as "--", and a fresh
-run of either is shown with "*" but does not enter Table 18.
+Two Table 19 cells (Stanford pooled BrainBERT ft, Ghent LOO BrainBERT ft; see
+NOT_IN_CELLS) come from runs that are incomplete in the archive, so paper_cells
+cannot rebuild them: the value the paper prints is shown with "~" and not
+checked, and a fresh run of either is shown with "*" but does not enter Table 18.
+One cell, Ghent LOO PopT ft, is checked at its exact rounding (0.012) and the
+paper's printed value (0.013, a second rounding of 0.0125) is noted beside it.
 
 Fresh runs (``--cells DIR [DIR ...]``)
 --------------------------------------
@@ -153,14 +156,18 @@ EXPECTED_T19 = {
     ("Ghent", "per_subject"):    ("0.052", "0.038", "0.050", "0.021"),
     ("Ghent", "loo"):            ("0.050", "0.039", None, "0.012"),
 }
-# The two cells the paper does not report (None above; printed "---" with a
-# footnote, "the run is incomplete"). Their incomplete runs are not in paper_cells.
-WITHDRAWN = {
-    ("Stanford", "pooled", "brainbert", "ft"):
-        "not reported in the paper: only seed 42 of the three seeds has a result "
-        "(r = 0.039); the seed 0 and 1 outputs were never retrieved",
-    ("Ghent", "loo", "brainbert", "ft"):
-        "not reported in the paper: only 3 of the 16 LOO folds have a result",
+# Cells the paper prints that paper_cells cannot rebuild (None above): the
+# archived runs are incomplete. Value printed in the paper, and why.
+NOT_IN_CELLS = {
+    ("Stanford", "pooled", "brainbert", "ft"): ("0.035",
+        "only seed 42 of the three seeds is archived (r = 0.039); "
+        "the seed 0 and 1 outputs are not"),
+    ("Ghent", "loo", "brainbert", "ft"): ("0.043",
+        "only 3 of the 16 LOO folds are archived"),
+}
+# Cells the paper prints at a different rounding than the exact artifact value.
+PRINTED_AS = {
+    ("Ghent", "loo", "popt", "ft"): ("0.013", "exact 0.012479; the paper rounds 0.0125 again"),
 }
 # Table 18: (mean, sd, three-seed mark, winning regime) per dataset.
 T18_ROWS = (("brainbert", "probe"), ("brainbert", "ft"), ("brainbert", "temporal"),
@@ -389,7 +396,7 @@ def not_comparable(c):
 def paper_regimes(fm, adaptation, dataset):
     """The regimes the paper's Table 18 cell was chosen from."""
     return [rg for rg in T18_REGIMES[adaptation]
-            if (dataset, rg, fm, adaptation) not in WITHDRAWN]
+            if (dataset, rg, fm, adaptation) not in NOT_IN_CELLS]
 
 
 def best_regime(cells, fm, adaptation, dataset):
@@ -459,10 +466,12 @@ def print_table19(cells, ck, out):
         for (fm, ad), w in zip(T19_COLS, want):
             c = cells.get((ad, ds, fm, rg))
             where = f"T19 {ds} {REGIME_LABEL[rg]} {FM_LABEL[fm]} {ad}"
-            if (ds, rg, fm, ad) in WITHDRAWN:
-                vals.append(f"{'--' if c is None else fmt(c['mean']) + '*':>17}")
+            if (ds, rg, fm, ad) in NOT_IN_CELLS:
+                printed = NOT_IN_CELLS[(ds, rg, fm, ad)][0]
+                vals.append(f"{printed + '~' if c is None else fmt(c['mean']) + '*':>17}")
                 if c is not None:
-                    marks.append(f"{where}: the paper does not report this cell")
+                    marks.append(f"{where}: fresh run; the paper prints {printed} "
+                                 "from an incomplete archived run")
                 continue
             vals.append(f"{fmt(c['mean']) if c else '--':>17}")
             why = not_comparable(c) if (fresh and c is not None) else []
@@ -475,8 +484,12 @@ def print_table19(cells, ck, out):
         out(f"{ds:<10}{REGIME_LABEL[rg]:<13}{''.join(vals)}")
         for m in marks:
             out(f"    {m}")
-    for (ds, rg, fm, ad), why in WITHDRAWN.items():
-        out(f"  -- {ds} {REGIME_LABEL[rg]} {FM_LABEL[fm]} {ad}: {why}.")
+    for (ds, rg, fm, ad), (printed, why) in NOT_IN_CELLS.items():
+        out(f"  ~ {ds} {REGIME_LABEL[rg]} {FM_LABEL[fm]} {ad}: printed in the paper as "
+            f"{printed}, not checked: {why}.")
+    for (ds, rg, fm, ad), (printed, why) in PRINTED_AS.items():
+        out(f"  {ds} {REGIME_LABEL[rg]} {FM_LABEL[fm]} {ad}: printed in the paper as "
+            f"{printed} ({why}).")
 
 
 def print_table18(cells, ck, out):

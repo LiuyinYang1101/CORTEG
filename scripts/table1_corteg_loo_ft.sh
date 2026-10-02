@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Table 1, "CORTEG (ours) LOO-FT" row, Stanford finger: paper r = 0.551 ± 0.147.
-# Two-stage protocol, final recipe "v3" (App. A.1):
+# Two-stage protocol, the App. A.1 recipe:
 #   Stage 1 trains pooled on the N-1 other subjects (same recipe as the pooled row).
 #   Stage 2 fine-tunes the spatial adapter, LoRA and the regression head on the
 #   held-out subject's training split: AdamW, base LR 1e-3 (head, LayerNorms and
@@ -72,7 +72,7 @@ python -m experiments.run_regression_hilo_clean \
     --lora_last_n 4 --lora_r 4 --lora_alpha 16 --lora_dropout 0.2 \
     --lora_targets "qkv,proj,fc1,fc2" \
     --channel_adapter knn_soft_fourier --knn_k 8 \
-    --use_ecog_fuser --hi_patch_size 25 --hi_inject_last_n 4 \
+    --hi_patch_size 25 --hi_inject_last_n 4 \
     --merge_strategy average --stream both \
     --xyz_mode real --adapter_branch both \
     --freeze_readout \
@@ -100,7 +100,7 @@ python -m experiments.run_regression_hilo_clean \
     --lora_last_n 4 --lora_r 4 --lora_alpha 16 --lora_dropout 0.2 \
     --lora_targets "qkv,proj,fc1,fc2" \
     --channel_adapter knn_soft_fourier --knn_k 8 \
-    --use_ecog_fuser --hi_patch_size 25 --hi_inject_last_n 4 \
+    --hi_patch_size 25 --hi_inject_last_n 4 \
     --merge_strategy average --stream both \
     --xyz_mode real --adapter_branch both \
     --seed 42 \

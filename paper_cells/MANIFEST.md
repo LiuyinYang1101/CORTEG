@@ -58,21 +58,15 @@ file here and are not recomputed by the two aggregators:
 | Where | Numbers | Control |
 | --- | --- | --- |
 | App. A.11, protocol paragraph (BrainBERT centre pooling) | ≈34 % lower r | model-free proxy: ridge on raw high-gamma over the same 1 s windows, three Stanford subjects, centre vs full-window pooling |
-| App. A.11, adaptation paragraph | BrainBERT 0.040, PopT 0.053; +0.055 (PopT, `bp`); `cc` 0.150 / 0.136 | full-backbone fine-tuning, 9 Stanford subjects (the frozen-probe comparison values, 0.163 and 0.149, are `probe/Stanford/*/per_subject` here) |
-| App. A.11, adaptation paragraph | pooled r near zero | joint fine-tuning of the last two FM blocks and the temporal head |
-| App. A.11, extraction check | 0.094 ± 0.059, 0.107, 0.166 ± 0.064, t = 5.57, 0.179, 0.062, 0.374, 0.337, 0.247, 0.326 | per-electrode ridge readouts of re-extracted embeddings |
+| App. A.11, adaptation paragraph | qualitative ("improve some individual subjects, but the mean performance remains low") | per-electrode readouts and full-backbone fine-tuning |
+| App. A.11, adaptation paragraph | qualitative ("does not further improve") | joint fine-tuning of the last two FM blocks and the temporal head |
 | App. A.11, Brant paragraph | 0.025 | Brant on a 0.1 s anchor grid |
-| App. A.11, Brant paragraph | 0.059 → 0.107 (n = 8) | Brant with its 15-patch context |
 | App. A.11, representation analysis | 0.181 and the reconstruction results | frozen-embedding representation analysis |
-| App. A.11, seizure-onset zone | 0.654, 0.538 | omni_ieeg seizure-onset-zone control |
-| App. A.2, BrainTreebank windows | 0.85–0.93 AUROC (mean 0.90) | the pause before each Task A word alone, no neural data |
-| App. A.2, BrainTreebank windows | 0.540 ± 0.009 | Brant patch ending at onset |
+| App. A.2.3, BrainTreebank windows | 0.85–0.93 AUROC | the pause before each Task A word alone, no neural data |
 
-The pause-only AUROC is recomputed by `scripts/btb_pause_only_auroc.py`
-(transcripts only, CPU), as the paper says. The 0.1 s Brant grid is run by
-`scripts/table1_ieeg_fm_stanford.sh` (`brant_s0.1/`; `aggregate_fm.py` lists it
-under "Other cells"). The code for the other controls is not part of this
-release.
+The 0.1 s Brant grid is run by `scripts/table1_ieeg_fm_stanford.sh` (`brant_s0.1/`;
+`aggregate_fm.py` lists it under "Other cells"). The code for the other controls is
+not part of this release.
 
 Known stale fields, left as recorded:
 
@@ -105,9 +99,11 @@ Rounding once matters for fifteen cells whose full-precision value sits just
 below a 3-dp boundary (e.g. CORTEG, Task B SD 0.134495, or Ghent LOO PopT
 fine-tune 0.012479): rounding a 4-dp value again (Table 20's 0.1345 for the
 first; 0.0125, the 4-dp summary of the second) would print them 0.001 high.
-The paper and the scripts round once; the fourteen BrainTreebank cells are
-listed in `DOUBLE_ROUNDING_TRAPS` in `scripts/aggregate_btb.py`, and
-`tests/test_paper_cells.py` checks all fifteen.
+The scripts round once; the fourteen BrainTreebank cells are listed in
+`DOUBLE_ROUNDING_TRAPS` in `scripts/aggregate_btb.py`, and
+`tests/test_paper_cells.py` checks all fifteen. The paper rounds once everywhere
+except Ghent LOO PopT fine-tune, which it prints as 0.013; `aggregate_fm.py`
+checks 0.012 and notes the printed value.
 
 ## BrainTreebank: `btb/`
 
@@ -125,7 +121,7 @@ re-run.
 | CORTEG (layer-wise gate) — T3 "CORTEG (ours)" | `corteg_<task>/results_pooled_small_s<S>_lora4_mni_hfa70-200[_word_nonword].json` | `per_subject_auroc` | 42, 1, 2 | `experiments/run_btb_classification.py` (`scripts/table3_corteg_braintreebank.sh`) |
 | CORTEG (mean-pool fusion) | `corteg_<task>/..._hfa70-200_average[_word_nonword].json` | `per_subject_auroc` | 42, 1, 2 | same, `--merge_strategy average` |
 | CORTEG, random-init backbone — T3 | `corteg_<task>_random/..._randinit[_word_nonword].json` | `per_subject_auroc` | 42, 1, 2 | same, `--no_pretrained` |
-| HiLoFuseNet — T3; CNN-LSTM; LSTM | `base_HiLoFuseNet/`, `base_CNN_LSTM/`, `base_LSTM/`: `results_pooled_<task>_s<S>.json` | `per_subject_auroc` | 42, 1, 2 | `experiments/run_btb_baselines.py` (`scripts/table3_btb_baselines.sh`) |
+| HiLoFuseNet — T3; CNN-LSTM; LSTM | `base_HiLoFuseNet/`, `base_CNN_LSTM/`, `base_LSTM/`: `results_pooled_<task>_s<S>.json` | `per_subject_auroc` | 42, 1, 2 | not released |
 | PopT, LoRA — T3 "PopT"; full fine-tune; head-only | `popt_finetune_<task>/results_popt_{lora,full_ft,head_only}_<task>_seed42.json` | `per_subject.<s>.mean_auroc` | 42 | `experiments/run_popt_finetune_btb.py` (`scripts/table3_ieeg_fm_braintreebank.sh`) |
 | PopT, frozen probe | `fm_<task>/results_sub_*.json` | `arms.PopT_population` | deterministic | `experiments/run_ieeg_fm_baselines.py` (same script) |
 | BrainBERT, single-elec. max — T3 "BrainBERT†" | `fm_<task>/results_sub_*.json` | `arms.BrainBERT_single_elec_max` | deterministic | `experiments/run_ieeg_fm_baselines.py` |
@@ -184,10 +180,11 @@ trained further on that subject's training split); those files are never
 counted on their own, and a LOO folder without `_loo_done.json` is reported as
 incomplete.
 
-## Cells the paper does not report
+## Cells printed from incomplete runs
 
-Two Table 19 cells have no complete run on record. The paper prints "---"
-for them, with a footnote; their files are not here and the aggregator prints `--`:
+Two Table 19 cells have no complete run on record. The paper prints them (0.035 and
+0.043); their files are not here, so the aggregator shows the printed value with `~`
+and does not check it:
 
 | Cell | What exists |
 | --- | --- |
@@ -201,29 +198,15 @@ on them.
 
 - **These files reproduce the paper — verified.** Every printed cell of
   Tables 3, 9, 20, 18, 19 and the Table 1 FM rows, and the oracle null, is
-  recomputed exactly from this folder by the two scripts (CPU only);
+  recomputed exactly from this folder by the two scripts (CPU only), except
+  the two Table 19 cells printed from incomplete runs (below);
   `tests/test_paper_cells.py` keeps it that way.
-- **The released code reproduces these files — not yet verified** on the
-  paper's hardware (GPU, mixed precision) for any BrainTreebank or FM cell.
-  What exists so far:
-  - BrainTreebank: the only earlier public-code run (CORTEG gate, Task A,
-    seed 42, cohort 0.6364) predates the readout fix and used a different
-    training recipe (100 epochs, batch 32, patience 20, head dropout 0.1,
-    minimum lr 1e-6, 5 warm-up epochs, subjects in natural order); the
-    aggregator lists it under "Other cells", and it is not evidence either way.
-  - FM regression, Stanford: one run of the released code on CPU (fp32, since
-    AMP is off on CPU; seed 42 only, all nine subjects). Of the 7 seeds it
-    shares with this folder, 3 are within the seed-matched tolerances and 4 are
-    outside: probe PopT per-subject (cohort d −0.0069, max |d| 0.033, within
-    the paper's own seed-to-seed spread for that cell), probe BrainBERT LOO
-    (mean |d| 0.011), temporal head BrainBERT per-subject (mean |d| 0.013) and
-    temporal head PopT per-subject (mean |d| 0.013, max |d| 0.038). The 6
-    published values it can score (the two LOO probe cells of Table 19, and
-    the mean and SD of Brant's Table 18 and Table 1 finger cells) are within
-    tolerance. A CPU run is not like-for-like with the paper's GPU runs; the
-    GPU reruns are pending.
-
-  Check new runs seed by seed, as below, and record the outcome in the README.
+- **The released code reproduces these files — verified at seed 42 on GPU**
+  (RTX 5090, mixed precision): CORTEG gate on BrainTreebank 0.6585 / 0.7641
+  (paper seed 42: 0.6499 / 0.7591), PopT LoRA Task B 0.7790 (0.7790), Stanford
+  temporal head BrainBERT / PopT 0.0551 / 0.0627 (0.0526 / 0.0626), Brant 0.0284
+  (0.0284); all within the tolerances below. GPU training is not bit-reproducible.
+  Check new runs seed by seed, as below, and record the outcome in REPRODUCING.md.
 - **Ghent cells** cannot be re-run from this release; these files are the
   only public record of them.
 
@@ -231,15 +214,12 @@ on them.
 
 With the release scripts' default output folders
 (`scripts/table3_corteg_braintreebank.sh` -> `table3/`,
-`scripts/table3_btb_baselines.sh` -> `base_<decoder>/`,
 `scripts/table3_ieeg_fm_braintreebank.sh` -> `fm_runs/`,
 `scripts/table1_ieeg_fm_stanford.sh` -> `ieeg_fm_regression/`):
 
 ```bash
 OUT="${CORTEG_OUTPUT_ROOT:-$HOME/workspace/outputs/corteg}"
-python scripts/aggregate_btb.py --cells "$OUT/braintreebank/table3" \
-    "$OUT/braintreebank/base_HiLoFuseNet" "$OUT/braintreebank/base_CNN_LSTM" \
-    "$OUT/braintreebank/base_LSTM" "$OUT/braintreebank/fm_runs"
+python scripts/aggregate_btb.py --cells "$OUT/braintreebank/table3" "$OUT/braintreebank/fm_runs"
 python scripts/aggregate_fm.py  --cells "$OUT/ieeg_fm_regression"
 ```
 
@@ -254,7 +234,6 @@ everything that is not a result file (caches, summaries, logs) is skipped
 | Runner | Result file | Cells |
 | --- | --- | --- |
 | `experiments/run_btb_classification.py` | `btb_<train_mode>_<merge>_<endpoint>[tags]_seed<S>.json` | CORTEG gate / mean-pool / random init |
-| `experiments/run_btb_baselines.py` | `results_<train_mode>_<endpoint>_s<S>[_ev<E>][_<tag>...].json` | HiLoFuseNet, CNN-LSTM, LSTM |
 | `experiments/run_popt_finetune_btb.py` | `popt_<endpoint>_<mode>_seed<S>.json` | PopT LoRA / full fine-tune / head-only |
 | `experiments/run_ieeg_fm_baselines.py` | `<fm>_<endpoint>_<arm>_seed<S>.json` | frozen BrainBERT / PopT / Brant arms |
 | `experiments/run_ieeg_fm_regression.py` | `<adaptation>/Stanford/<fm>/<regime>/seed<S>/results_{pooled,persub}.json`, `_loo_done.json` | BrainBERT / PopT probe, last-N ft, temporal head |

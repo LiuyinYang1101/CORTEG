@@ -21,9 +21,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# mne is imported lazily: by data/stanford_preprocessing (raw -> *_features.pkl)
-# and by the LaBraM baseline for its channel montage. Not needed to train or
-# evaluate CORTEG from the prepared files.
+# mne is used only by the Stanford preprocessing (data/stanford_preprocessing,
+# raw -> *_features.pkl). Not needed to train or evaluate CORTEG from the
+# prepared files.
 mne = ["mne>=1.6"]
 # Intracranial foundation-model baselines (ieeg_fm.py). The BrainBERT and PopT
 # checkpoints pickle OmegaConf configs, so loading either one needs omegaconf, and
@@ -32,8 +32,6 @@ mne = ["mne>=1.6"]
 # ieeg_fm.py and imports only torch; there is no need to install their
 # requirements.txt files (PopT's pins numpy 1.24 and scipy 1.10).
 ieeg-fm = ["omegaconf>=2.3", "huggingface_hub>=0.20"]
-# MantisV2, the generic time-series FM control (experiments/run_mantis_baseline.py).
-mantis = ["mantis-tsfm>=1.0"]
 
 [project.urls]
 Paper = "https://arxiv.org/abs/2605.10337"

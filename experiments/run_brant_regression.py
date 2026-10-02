@@ -48,7 +48,7 @@ patch's output). That control is not this runner's protocol. It extracted
 each window independently, on a subsampled split (1500 training and 1000
 test windows per subject), and used n = 8 subjects, dropping mv, which lacks
 the 90 s of history. This runner instead uses the anchor grid on the full
-split and tiles short history (step 3). The same audit also scored a ridge
+split and tiles short history (step 3). The same App. A.11 control also scored a ridge
 readout of the electrode-averaged embedding, which is the input this runner's
 head gets. That readout rose from 0.028 at one patch to 0.079 with 15 patches
 when the newest patch's output is used (--patch_pool last). It reached only
