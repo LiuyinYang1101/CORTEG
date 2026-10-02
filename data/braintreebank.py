@@ -485,7 +485,7 @@ def assert_no_window_overlap(times, win_sec: float, a_idx, b_idx, label: str = "
     """Raise unless ZERO cross-block pairs have overlapping windows. Returns the count (0).
 
     `win_sec` is the ARM's true footprint and must be supplied by the caller. It is deliberately not
-    defaulted to the embargo: doing so made this check a tautology (an earlier version did exactly that).
+    defaulted to the embargo: doing so would make this check a tautology.
     """
     if win_sec is None or not np.isfinite(win_sec) or win_sec <= 0:
         raise ValueError("win_sec must be the arm's true footprint in seconds, > 0")
@@ -536,12 +536,12 @@ def forward_chaining_split(times, win_sec: float, n_folds: int = 4,
 
     Chosen over a single 60/15/25 cut because that gave only 450 test events per subject and dropped
     power for the headline FM contrast from 0.971 to 0.706, while shifting the estimand to
-    "final-quarter discriminability" (an earlier version did). Forward chaining tests on ~75 % of events,
+    "final-quarter discriminability". Forward chaining tests on ~75 % of events,
     recovers the session-average estimand to 0.011 MAE, and keeps power at 0.947.
 
     With `val_frac > 0` each fold returns (fit_idx, val_idx, test_idx) forming a strictly ordered
-    fit | embargo | val | embargo | test chain -- the causal train/val/test the reviewer asked for,
-    and the only form safe for early stopping. With `val_frac = 0` it returns (train_idx, test_idx).
+    fit | embargo | val | embargo | test chain -- a causal train/val/test split, and the only form
+    safe for early stopping. With `val_frac = 0` it returns (train_idx, test_idx).
     """
     t = assert_valid_times(times)
     _check_embargo(win_sec, embargo_sec)
@@ -566,9 +566,9 @@ def forward_chaining_split(times, win_sec: float, n_folds: int = 4,
 
         if val_frac and val_frac > 0:
             # Causal val block: the TAIL of the history, embargoed from BOTH fit and test, giving
-            # fit | embargo | val | embargo | test. A random val carve (an earlier version of this
-            # pipeline drew one with rng.permutation) interleaves val with fit, so early stopping
-            # selects on overlapping windows -- model-selection leakage even when train/test is clean.
+            # fit | embargo | val | embargo | test. A random val carve (e.g. rng.permutation)
+            # would interleave val with fit, so early stopping would select on overlapping windows --
+            # model-selection leakage even when train/test is clean.
             n_val = max(1, int(round(val_frac * pool.size)))
             va_pos = pool[-n_val:]
             t_val0 = ts[va_pos[0]]
@@ -631,7 +631,7 @@ def split_report(times, win_sec: float, train_idx, test_idx, val_idx=None, schem
 
 if __name__ == "__main__":
     rng = np.random.default_rng(0)
-    # 1. the check must be ABLE to fail (v1's was a tautology)
+    # 1. the check must be ABLE to fail (not a tautology)
     tt = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
     try:
         assert_no_window_overlap(tt, 5.0, [0, 1, 2], [3, 4, 5], "deliberate")

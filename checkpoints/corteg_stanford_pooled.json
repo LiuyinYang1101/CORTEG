@@ -26,10 +26,22 @@
     "lora_last_n": 4,
     "lora_targets": "qkv,proj,fc1,fc2",
     "hi_patch_size": 25,
-    "hi_inject_last_n": 4,
-    "use_ecog_fuser": true
+    "hi_inject_last_n": 4
   },
   "note": "build_args is the exact argparse namespace the released run used, with local paths cleared, except that the run predates --freeze_readout: its readout was built lazily and never trained, which that flag now reproduces (see readout_note). A training command rebuilt from build_args alone trains the readout. load_corteg() rebuilds from it so the architecture cannot drift from the weights.",
+  "retired_build_args": {
+    "note": "These build_args keys are recorded as the released run set them, but the runner no longer has the flag: each value is now fixed in the code, as described here. tests/test_release_integrity.py checks the recorded values.",
+    "keys": {
+      "use_ecog_fuser": "legacy fuser switch; never read when the knn_soft_fourier adapter is configured",
+      "M_EEG": "EEG embedding-table size, fixed at 145 (the adapter uses its 142 positioned rows)",
+      "fuser_hidden": "spatial-adapter hidden width, fixed at 128",
+      "knn_sigma": "KNN bandwidth, fixed at null = median nearest-neighbour distance",
+      "head_hidden": "readout is always one linear layer (0 = no hidden layer)",
+      "finetune_token_mode": "readout always mean-pools the tokens",
+      "finetune_lora_targets": "Stage 2 unfreezes every injected LoRA module (qkv, proj, fc1, fc2)",
+      "save_ckpt_path": "full-model save option; the runner saves the trainable weights only"
+    }
+  },
   "build_args": {
     "dataset": "Stanford",
     "data_root": "",

@@ -18,10 +18,8 @@ omegaconf>=2.3          # BrainBERT and PopT checkpoints pickle OmegaConf config
 huggingface_hub>=0.20   # PopT weights are downloaded from the Hugging Face Hub
 
 # Optional -- uncomment for the pieces you run:
-# mantis-tsfm>=1.0   # MantisV2 control; see experiments/run_mantis_baseline.py  (pip install -e .[mantis])
-# mne>=1.6           # Stanford preprocessing and the LaBraM channel montage   (pip install -e .[mne])
+# mne>=1.6           # Stanford preprocessing only   (pip install -e .[mne])
 
-# Tested versions on a CUDA 12.8 / RTX 5090 box:
+# Tested versions (CUDA 12.8):
 #   torch==2.11.0+cu128, numpy==2.4, scipy==1.17, timm==1.0.26, einops==0.8.2, h5py==3.16,
-#   scikit-learn==1.8, joblib==1.5, omegaconf==2.3.1, huggingface_hub==1.8, mne==1.11,
-#   mantis-tsfm==1.0.0
+#   scikit-learn==1.8, joblib==1.5, omegaconf==2.3.1, huggingface_hub==1.8, mne==1.11

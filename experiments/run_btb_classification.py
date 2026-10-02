@@ -56,8 +56,7 @@ numbers; where that behaviour is questionable, a flag gives the alternative.
 * Early stopping selects on the POOLED validation AUROC, which ranks all subjects'
   windows together. Most of those pairs are between subjects, so it is largely
   blind to the per-subject AUROC that is reported. ``--select_metric
-  per_subject`` selects on the mean per-subject validation AUROC instead, as the
-  from-scratch baselines do.
+  per_subject`` selects on the mean per-subject validation AUROC instead.
 * ``--patience`` counts evaluations, not epochs: with ``--eval_every 2``,
   patience 15 allows about 30 epochs without improvement.
 * Task B's candidate events are filtered with ``word_nonword_events``' default
@@ -458,7 +457,7 @@ def extract_subject(subj: str, args):
 
     os.makedirs(os.path.dirname(cache), exist_ok=True)
     # A per-process temporary name: two processes building the same cache at
-    # once (this runner, run_btb_baselines.py, a CPU pre-build) would otherwise
+    # once (two runs of this runner, or a CPU pre-build) would otherwise
     # write one file, and the first os.replace would publish a half-written one.
     tmp = f"{cache[:-len('.npz')]}.{os.getpid()}.tmp.npz"
     try:
@@ -487,10 +486,6 @@ def build_corteg(C: int, T_lo: int, xyz_m: np.ndarray, args):
 
     build_model wants coordinates in millimetres and divides by 1000 internally,
     so the metres-scale array is multiplied back up here.
-
-    ``use_ecog_fuser=False`` is not a difference from the paper runs, which set
-    it True: with a channel adapter configured, build_model attaches that
-    adapter and never reads the fuser flag.
     """
     from experiments.run_regression_hilo_clean import build_model, unfreeze_merge_params
     from models.steegformer.probe import configure_lora_lastn_probe
@@ -503,16 +498,12 @@ def build_corteg(C: int, T_lo: int, xyz_m: np.ndarray, args):
         layerwise_gate_bottleneck=args.layerwise_gate_bottleneck,
         layerwise_gate_act=args.layerwise_gate_act,
         layerwise_gate_share_blocks=False,
-        # knn_sigma=None means the median nearest-neighbour distance. Passing
-        # 0.0 divides by zero inside the Gaussian kernel, zeroing every weight
-        # and erasing the KNN prior the adapter is supposed to start from.
-        channel_adapter=CHANNEL_ADAPTER, knn_k=KNN_K, knn_sigma=None,
+        channel_adapter=CHANNEL_ADAPTER, knn_k=KNN_K,
         adapter_branch="both", xyz_mode="real",
-        use_ecog_fuser=False, M_EEG=145, fuser_hidden=128,
-        head_dropout=args.head_dropout, head_hidden=0,
+        head_dropout=args.head_dropout,
         lora_r=args.lora_r, lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout, lora_last_n=args.lora_last_n,
-        lora_targets=LORA_TARGETS, full_finetune=False, use_full_codebook=False,
+        lora_targets=LORA_TARGETS, full_finetune=False,
     )
     model = build_model(a, C_in=C, T_in=T_lo, ecog_xyz_m=xyz_m * 1000.0, d_out=1)
     configure_lora_lastn_probe(

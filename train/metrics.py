@@ -1,6 +1,5 @@
 """Regression metrics for ECoG finger trajectory decoding."""
 from __future__ import annotations
-from typing import Dict, Any
 import numpy as np
 
 

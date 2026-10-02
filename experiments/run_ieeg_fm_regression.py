@@ -57,7 +57,7 @@ These are the foundation models' own budgets, not CORTEG's (which trains for
 reproduce the paper's numbers. The paper ran probe and fine-tune under all three
 regimes (seeds 42, 0 and 1 for pooled and per-subject; 42 for LOO) and the
 temporal head pooled and per-subject at seed 42. The one exception is pooled
-BrainBERT fine-tuning, which Table 19 does not report (see below).
+BrainBERT fine-tuning, whose archived run is incomplete (see below).
 `scripts/table1_ieeg_fm_stanford.sh` runs that grid.
 
 Where results go. With no --save_root, a run writes to
@@ -117,21 +117,18 @@ unless noted; the three-seed cells average each subject over seeds first):
   BrainBERT probe     0.044 +/- 0.051  LOO     probe pooled  BB 0.030, PopT 0.040 (3 seeds)
   BrainBERT last-2 FT 0.047 +/- 0.038  LOO     probe per-sub BB 0.039, PopT 0.049 (3 seeds)
   BrainBERT temporal  0.053 +/- 0.056  per-sub probe LOO     BB 0.044, PopT 0.050
-  PopT probe          0.050 +/- 0.045  LOO     FT pooled     BB ---+, PopT 0.041 (3 seeds)
+  PopT probe          0.050 +/- 0.045  LOO     FT pooled     BB 0.035+, PopT 0.041 (3 seeds)
   PopT last-2 FT      0.041 +/- 0.046  pooled  FT per-sub    BB 0.033, PopT 0.037 (3 seeds)
   PopT temporal       0.063 +/- 0.046  per-sub FT LOO       BB 0.047, PopT 0.036
 
 The Table 1 rows are the best adaptation: BrainBERT 0.053 +/- 0.056 and PopT
 0.063 +/- 0.046, both the temporal head, per subject.
 
-  + Table 19 prints "---" for Stanford pooled BrainBERT fine-tuning: its
-    footnote says the run is incomplete. Only the seed-42 run (r = 0.039) was
-    archived. The authors' revision notes give seeds 0 and 1 as 0.030 and
-    0.036, from cluster runs whose outputs were never retrieved. The cell is
-    therefore not a paper value, and it is not a candidate for Table 18, whose
-    BrainBERT fine-tune row is the LOO cell. The script runs it only when
-    asked (RUN_BB_FT_POOLED=1, all three seeds, more than 32 GB of GPU
-    memory).
+  + Stanford pooled BrainBERT fine-tuning comes from an incomplete run: only
+    the seed-42 output (r = 0.039) is archived, so paper_cells cannot rebuild
+    the printed 0.035. Table 18's BrainBERT fine-tune row is the LOO cell. The
+    script runs this cell only when asked (RUN_BB_FT_POOLED=1, all three
+    seeds, more than 32 GB of GPU memory).
 
 Not in this release: full-backbone fine-tuning with a per-electrode readout,
 joint fine-tuning of the FM with the temporal head, the representation

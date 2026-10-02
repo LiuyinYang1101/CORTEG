@@ -1,38 +1,31 @@
 # models/steegformer/steegformer_hilo_clean.py
-"""Clean Hi-Lo backbone with optional SPVAE latent router.
+"""CORTEG Hi-Lo backbone: an STEEGFormer ViT with a high-gamma token stream.
 
 Merge strategies:
-  - average:        fixed 0.5 lo + 0.5 hi  (clean baseline)
-  - hi_lora:        hi tokens pass through early blocks with DualLoRA adapters,
-                    then fixed 0.5 merge (hi gets real transformer processing)
-  - layerwise_gate: one learned scalar per block gates hi into the lo stream
+  - average:        fixed 0.5 lo + 0.5 hi merge before the last `hi_inject_last_n` blocks
+  - layerwise_gate: one learned scalar per block gates hi into the lo stream (CORTEG)
+
+Channel adapters (map ECoG electrode xyz to channel embeddings):
+  - none:             pretrained EEG channel-index embedding
+  - knn_soft_fourier: KNN-initialised soft attention + Fourier residual (CORTEG)
 """
 from __future__ import annotations
 
 import math
 from functools import partial
-from typing import Optional, Literal, Dict, Tuple
+from typing import Optional, Dict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import timm.models.vision_transformer
 
-from .lora import set_block_lora_enabled
-
 
 # ============================================================
 # Channel Adaptation Methods
 # ============================================================
 
-CHANNEL_ADAPTERS = (
-    "none", "original", "zero_mlp", "additive_mlp",
-    "fourier_add", "direct_fourier", "subspace", "soft_lookup_add", "coord_pe",
-    # Spatial KNN family — uses known EEG electrode positions
-    "knn_hard", "knn_fourier", "knn_soft", "knn_soft_fourier",
-    # Gaussian Process family — proper GP posterior over pretrained embeddings
-    "gp_hard", "gp_fourier",
-)
+CHANNEL_ADAPTERS = ("none", "knn_soft_fourier")
 
 
 def _fourier_features(xyz: torch.Tensor, n_freq: int = 32) -> torch.Tensor:
@@ -57,8 +50,6 @@ class ChannelAdapterBase(nn.Module):
         raise NotImplementedError
 
 
-
-
 class FourierMLPAdapter(ChannelAdapterBase):
     """Fourier(xyz) → MLP → D, zero-init. Multi-scale spatial features."""
     def __init__(self, D: int, hidden: int = 128, n_freq: int = 32):
@@ -78,12 +69,6 @@ class FourierMLPAdapter(ChannelAdapterBase):
             xyz = xyz.unsqueeze(0)
         ff = _fourier_features(xyz, self.n_freq)  # (B, C, 6F)
         return self.net(ff)  # (B, C, D)
-
-
-
-
-
-
 
 
 _EEG_XYZ_142 = [
@@ -136,7 +121,6 @@ _EEG_XYZ_142 = [
     [-0.013664,-0.109266, 0.032856],[ 0.013651,-0.109106, 0.030936],[-0.012047,-0.092607, 0.065508],
     [ 0.013923,-0.092694, 0.066958],
 ]
-# fmt: on
 
 _N_EEG = 142  # number of positioned EEG channels in the pretrained table
 
@@ -184,27 +168,18 @@ def _knn_weights(
     return weights, topk_idx
 
 
-
-
-
-
 class KNNSoftAdapter(ChannelAdapterBase):
     """Learnable soft attention over EEG embeddings, initialized from KNN weights.
 
-    Instead of fixed KNN weights, an MLP predicts attention logits over all M
-    EEG embeddings. Initialized so that initial logits reproduce the KNN solution
-    for the first _N_EEG slots (which have known 10-10 XYZ positions). Slots
-    beyond _N_EEG (e.g. HBN-specific channels, 142-255) get neutral zero logits
-    and are learned from scratch during training.
+    Instead of fixed KNN weights, an MLP predicts attention logits over the
+    _N_EEG = 142 pretrained EEG channels that have known 10-10 positions. Its
+    output bias is initialised to the (channel-averaged) log KNN weights, so
+    training starts from the KNN solution.
     """
     def __init__(self, eeg_emb: torch.Tensor, ecog_xyz_m: torch.Tensor,
-                 k: int = 8, sigma: Optional[float] = None, hidden: int = 128,
-                 use_full_table: bool = False):
+                 k: int = 8, sigma: Optional[float] = None, hidden: int = 128):
         super().__init__()
-        M, D = eeg_emb.shape[0], eeg_emb.shape[1]
-        # If use_full_table=True, use the full embedding table (e.g. 256 HBN slots).
-        # Otherwise, cap at _N_EEG=142 (the 10-10 positioned subset).
-        M_pos = M if use_full_table else min(M, _N_EEG)
+        M_pos = min(eeg_emb.shape[0], _N_EEG)   # the positioned 10-10 subset
         self.register_buffer("E", eeg_emb[:M_pos].to(torch.float32))
 
         self.net = nn.Sequential(
@@ -216,13 +191,11 @@ class KNNSoftAdapter(ChannelAdapterBase):
         )
         self.scale = nn.Parameter(torch.ones(1))
 
-        # Initialize: KNN prior on slots 0.._N_EEG-1, zeros on slots _N_EEG..M_pos-1
+        # Initialize the output bias to the KNN prior (log weights, averaged over electrodes)
         with torch.no_grad():
             eeg_xyz = _get_eeg_xyz_tensor(ecog_xyz_m.device)
             weights, _ = _knn_weights(ecog_xyz_m, eeg_xyz, k=k, sigma=sigma)  # (C, 142)
-            n_known = min(M_pos, _N_EEG)
-            target_logits = torch.zeros(ecog_xyz_m.shape[0], M_pos, device=weights.device)
-            target_logits[:, :n_known] = torch.log(weights[:, :n_known] + 1e-8)
+            target_logits = torch.log(weights[:, :M_pos] + 1e-8)
             self.net[-1].bias.data.copy_(target_logits.mean(dim=0))
 
     def forward(self, xyz: torch.Tensor) -> torch.Tensor:
@@ -237,74 +210,19 @@ class KNNSoftFourierAdapter(ChannelAdapterBase):
     """Full: learnable soft attention (KNN-init) + Fourier residual."""
     def __init__(self, eeg_emb: torch.Tensor, ecog_xyz_m: torch.Tensor,
                  k: int = 8, sigma: Optional[float] = None,
-                 hidden: int = 128, n_freq: int = 32,
-                 use_full_table: bool = False):
+                 hidden: int = 128, n_freq: int = 32):
         super().__init__()
         D = eeg_emb.shape[1]
-        self.soft = KNNSoftAdapter(eeg_emb, ecog_xyz_m, k=k, sigma=sigma, hidden=hidden,
-                                    use_full_table=use_full_table)
+        self.soft = KNNSoftAdapter(eeg_emb, ecog_xyz_m, k=k, sigma=sigma, hidden=hidden)
         self.residual = FourierMLPAdapter(D, hidden=hidden, n_freq=n_freq)
 
     def forward(self, xyz: torch.Tensor) -> torch.Tensor:
         return self.soft(xyz) + self.residual(xyz)
 
 
-
-
-
-
-
-
 # ============================================================
-# Building blocks (self-contained, no V3 dependency)
+# Building blocks
 # ============================================================
-
-class ECoGChannelAdapter(nn.Module):
-    """Map ECoG electrode xyz → channel embeddings via a learned weighted sum
-    over a fixed pretrained EEG embedding table E (M, D), plus a residual adapter.
-
-    forward(pos_ecog_xyz):
-      - pos_ecog_xyz: (C, 3) or (B, C, 3)
-      - returns (fused, weights):  (B, C, D), (B, C, M)
-    """
-    def __init__(self, eeg_emb_fixed: torch.Tensor, hidden: int = 128):
-        super().__init__()
-        if eeg_emb_fixed.ndim != 2:
-            raise ValueError(f"eeg_emb_fixed must be (M, D), got {tuple(eeg_emb_fixed.shape)}")
-        M, D = eeg_emb_fixed.shape
-        self.M, self.D = int(M), int(D)
-
-        self.register_buffer("E", eeg_emb_fixed.to(torch.float32), persistent=True)
-
-        self.net = nn.Sequential(
-            nn.Linear(3, hidden),
-            nn.GELU(),
-            nn.Linear(hidden, hidden),
-        )
-        self.eeg_proj = nn.Linear(hidden, self.M, bias=False)
-        self.residual_proj = nn.Sequential(
-            nn.Linear(hidden, hidden),
-            nn.GELU(),
-            nn.Linear(hidden, D, bias=False),
-        )
-        nn.init.zeros_(self.residual_proj[-1].weight)
-        self.layerNorm = nn.LayerNorm(D)
-
-    def forward(self, pos_ecog_xyz: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        squeeze_b = False
-        if pos_ecog_xyz.ndim == 2:
-            pos_ecog_xyz = pos_ecog_xyz.unsqueeze(0)
-            squeeze_b = True
-
-        latent = self.net(pos_ecog_xyz)         # (B, C, hidden)
-        w = self.eeg_proj(latent)               # (B, C, M)
-        fused = torch.matmul(w, self.E)         # (B, C, D)
-        fused = self.layerNorm(fused + self.residual_proj(latent))
-
-        if squeeze_b:
-            fused = fused.squeeze(0)
-            w = w.squeeze(0)
-        return fused, w
 
 class PatchEmbedEEG(nn.Module):
     """Tokenize low-freq EEG: unfold + Linear(patch_size, D)."""
@@ -375,16 +293,6 @@ class TemporalPositionalEncoding(nn.Module):
         return self.pe[0, seq_indices.reshape(-1)].view(b, n, -1)
 
 
-
-
-
-
-
-
-
-
-
-
 class LayerwiseHiLoGate(nn.Module):
     """Per-layer gated residual fusion of hi tokens into the lo stream.
 
@@ -394,7 +302,7 @@ class LayerwiseHiLoGate(nn.Module):
     Zero-init last linear: with gate_act="tanh", g==0 at start so the model
     begins exactly as the lo-only baseline then learns where to open hi
     (Flamingo-style); tanh also lets it suppress hi (negative g). GMU-style
-    input-dependent gate, generalised from LearnedRouter to one scalar/layer.
+    input-dependent gate with one scalar per layer.
     Params (D=512, bottleneck=16, depth=8, i.e. CORTEG-S): 18,584 including the
     2,048-param input LayerNorm (16,536 without it); no extra block params.
     """
@@ -434,40 +342,23 @@ class LayerwiseHiLoGate(nn.Module):
 
 
 # ============================================================
-# TokenRegressor (copied from V3 for self-containment)
+# TokenRegressor
 # ============================================================
 
-TokenMode = Literal["flatten", "mean", "cls"]
-
-
 class TokenRegressor(nn.Module):
-    def __init__(
-        self,
-        d_out: int,
-        token_mode: TokenMode = "flatten",
-        include_cls: bool = True,
-        dropout: float = 0.0,
-        head_hidden: int = 0,
-    ):
+    """Linear readout on the mean of the backbone's output tokens."""
+
+    def __init__(self, d_out: int, include_cls: bool = True, dropout: float = 0.0):
         super().__init__()
         self.d_out = int(d_out)
-        self.token_mode = token_mode
         self.include_cls = bool(include_cls)
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-        self.head_hidden = int(head_hidden)
         self.head: Optional[nn.Module] = None
 
     def _build_head(self, dim: int, device: torch.device) -> nn.Module:
-        if self.head_hidden > 0:
-            return nn.Sequential(
-                nn.Linear(dim, self.head_hidden),
-                nn.GELU(),
-                nn.Dropout(self.dropout.p if isinstance(self.dropout, nn.Dropout) else 0.0),
-                nn.Linear(self.head_hidden, self.d_out),
-            ).to(device)
         return nn.Linear(dim, self.d_out).to(device)
 
-    def materialize_head(self, embed_dim: int, num_tokens: Optional[int] = None) -> None:
+    def materialize_head(self, embed_dim: int) -> None:
         """Build self.head NOW, before the optimizer is created.
 
         The head is otherwise built lazily on the first forward, which means an
@@ -477,40 +368,17 @@ class TokenRegressor(nn.Module):
         the loss still falls, because the backbone can steer the pooled feature
         to suit a fixed projection.
         """
-        if self.head is not None:
-            return
-        if self.token_mode in ("cls", "mean"):
-            dim = int(embed_dim)
-        elif self.token_mode == "flatten":
-            if num_tokens is None:
-                raise ValueError("materialize_head: token_mode='flatten' requires num_tokens")
-            dim = int(num_tokens) * int(embed_dim)
-        else:
-            raise ValueError(f"materialize_head: unknown token_mode={self.token_mode}")
-        self.head = self._build_head(dim, torch.device("cpu"))
+        if self.head is None:
+            self.head = self._build_head(int(embed_dim), torch.device("cpu"))
 
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         if self.include_cls:
             feat = tokens
         else:
             feat = tokens[:, 1:, :] if tokens.shape[1] > 1 else tokens
-
         if self.head is None:
-            if self.token_mode in ("cls", "mean"):
-                dim = feat.shape[2]
-            else:
-                dim = feat.shape[1] * feat.shape[2]
-            self.head = self._build_head(dim, tokens.device)
-
-        if self.token_mode == "cls":
-            h = feat[:, 0, :]
-        elif self.token_mode == "mean":
-            h = feat.mean(dim=1)
-        else:  # flatten
-            h = feat.flatten(1)
-        return self.head(self.dropout(h))
-
-
+            self.head = self._build_head(feat.shape[2], tokens.device)
+        return self.head(self.dropout(feat.mean(dim=1)))
 
 
 # ============================================================
@@ -521,7 +389,7 @@ MERGE_STRATEGIES = ("average", "layerwise_gate")
 
 
 class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
-    """ViT backbone with clean hi-freq merge — no SPVAE/router/CID."""
+    """ViT backbone with a lo (broadband) and hi (high-gamma) token stream."""
 
     def __init__(
         self,
@@ -593,107 +461,49 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
                 bottleneck=int(layerwise_gate_bottleneck),
                 gate_act=str(layerwise_gate_act),
             )
-        # ECoG channel adapter (attached after pretrained load)
-        self.ecog_fuser: Optional[ECoGChannelAdapter] = None
-        # New modular adapter system (additive to enc_channel by default)
+        # Spatial adapter, attached after the pretrained weights are loaded
         self.channel_adapter: Optional[ChannelAdapterBase] = None
-        self._channel_adapter_mode: str = "additive"  # "additive" or "replace"
 
         self.last_aux: Dict[str, torch.Tensor] = {}
 
-        # For logging: store last router gate mean
+        # For logging: mean layerwise gate of the last forward
         self._last_gate_mean: Optional[float] = None
-
-        # --- Subject prompt tokens (attached via attach_subject_prompts) ---
-        self.subject_prompts: Optional[nn.Embedding] = None
-        self.num_prompt_tokens: int = 0
-        self._prompt_dim: int = embed_dim
-
-    def attach_ecog_fuser_from_channel_embed(self, M: Optional[int] = None, hidden: int = 128):
-        """Create and attach an ECoGChannelAdapter using the pretrained EEG embedding table."""
-        dev = self.enc_channel.emb.weight.device
-        with torch.no_grad():
-            E = self.enc_channel.emb.weight.detach().clone()
-            if M is not None:
-                E = E[:int(M)]
-            E = E.to(device=dev, dtype=torch.float32)
-        self.ecog_fuser = ECoGChannelAdapter(E, hidden=hidden).to(dev)
-
-    def attach_subject_prompts(self, num_subjects: int, num_tokens: int = 4, init_std: float = 0.02):
-        """Attach per-subject learnable prompt tokens.
-
-        Tokens are prepended after CLS in forward_tokens.
-        """
-        D = self.enc_channel.emb.weight.shape[1]
-        self.num_prompt_tokens = num_tokens
-        # Embedding: num_subjects x (num_tokens * D), reshaped to (K, D) per subject
-        self.subject_prompts = nn.Embedding(num_subjects, num_tokens * D)
-        nn.init.normal_(self.subject_prompts.weight, std=init_std)
-        self._prompt_dim = D
-        print(f"  Subject prompts attached: {num_subjects} subjects x {num_tokens} tokens "
-              f"({self.subject_prompts.weight.numel()} params)", flush=True)
 
     def attach_channel_adapter(
         self, adapter_type: str, *,
-        M: Optional[int] = None,
         hidden: int = 128,
         ecog_xyz_m: Optional[torch.Tensor] = None,
         knn_k: int = 8,
         knn_sigma: Optional[float] = None,
-        use_full_table: bool = False,
     ):
         """Attach a channel adapter from the CHANNEL_ADAPTERS registry.
 
         Args:
             adapter_type: one of CHANNEL_ADAPTERS
-            M: number of EEG positions to use from embedding table
-            hidden: hidden dim for MLPs
-            ecog_xyz_m: (C, 3) ECoG electrode positions in meters.
-                        Required for knn_* adapters.
-            knn_k: number of nearest EEG neighbours for KNN adapters
+            hidden: hidden width of the adapter MLPs
+            ecog_xyz_m: (C, 3) ECoG electrode positions in meters (required for
+                        knn_soft_fourier).
+            knn_k: number of nearest EEG neighbours for the KNN prior
             knn_sigma: Gaussian bandwidth for KNN; None = auto (median NN dist)
         """
         if adapter_type not in CHANNEL_ADAPTERS:
             raise ValueError(f"Unknown adapter: {adapter_type!r}. Choose from {CHANNEL_ADAPTERS}")
-
-        dev = self.enc_channel.emb.weight.device
-        D = self.enc_channel.emb.weight.shape[1]
-
         if adapter_type == "none":
             self.channel_adapter = None
             return
-
-        # Get EEG embedding table (used by some adapters)
-        with torch.no_grad():
-            E = self.enc_channel.emb.weight.detach().clone()
-            if M is not None:
-                E = E[:int(M)]
-            E = E.to(device=dev, dtype=torch.float32)
-
-        if adapter_type == "original":
-            # Use the old ECoGChannelAdapter via ecog_fuser path (replaces enc_channel)
-            self.ecog_fuser = ECoGChannelAdapter(E, hidden=hidden).to(dev)
-            return
-
-        # The spatial adapter needs electrode coordinates.
-        if adapter_type == "knn_soft_fourier" and ecog_xyz_m is None:
+        if ecog_xyz_m is None:
             raise ValueError(
                 "knn_soft_fourier requires ecog_xyz_m (ECoG electrode positions in meters)")
-        if ecog_xyz_m is not None:
-            ecog_xyz_m = ecog_xyz_m.to(device=dev, dtype=torch.float32)
 
-        if adapter_type == "knn_soft_fourier":
-            # Replaces enc_channel entirely: learnable soft attention over the
-            # pretrained EEG electrode bank (KNN-initialised), plus a Fourier
-            # residual on the raw coordinates. This is CORTEG's spatial adapter.
-            self.channel_adapter = KNNSoftFourierAdapter(
-                E, ecog_xyz_m, k=knn_k, sigma=knn_sigma, hidden=hidden,
-                use_full_table=use_full_table).to(dev)
-            self._channel_adapter_mode = "replace"
-        else:
-            raise ValueError(
-                f"Unknown channel_adapter={adapter_type!r}. "
-                "This release ships 'none' and 'knn_soft_fourier'.")
+        # knn_soft_fourier replaces enc_channel entirely: learnable soft attention
+        # over the pretrained EEG electrode bank (KNN-initialised), plus a Fourier
+        # residual on the raw coordinates. This is CORTEG's spatial adapter.
+        dev = self.enc_channel.emb.weight.device
+        with torch.no_grad():
+            E = self.enc_channel.emb.weight.detach().clone().to(device=dev, dtype=torch.float32)
+        ecog_xyz_m = ecog_xyz_m.to(device=dev, dtype=torch.float32)
+        self.channel_adapter = KNNSoftFourierAdapter(
+            E, ecog_xyz_m, k=knn_k, sigma=knn_sigma, hidden=hidden).to(dev)
 
     # -------------------------
     # Forward
@@ -706,6 +516,7 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
         ecog_xyz: Optional[torch.Tensor] = None,
         sid: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        # `sid` (subject ids) is accepted for interface compatibility and unused.
         if x.dim() != 3:
             raise ValueError(f"Expected x [B,C,T], got {tuple(x.shape)}")
         b, c, _ = x.shape
@@ -743,28 +554,15 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
             .reshape(b, n)
         )
 
-        # Channel embeddings
-        if self.ecog_fuser is not None:
-            # Legacy path: original fuser REPLACES enc_channel entirely
-            if ecog_xyz is None:
-                raise ValueError("ecog_fuser is active but no ecog_xyz provided.")
-            fused, _ = self.ecog_fuser(ecog_xyz)
-            if fused.ndim == 2:
-                ch_emb = fused.unsqueeze(0).unsqueeze(1).expand(b, seq, -1, -1).reshape(b, n, d)
-            else:
-                ch_emb = fused.unsqueeze(1).expand(-1, seq, -1, -1).reshape(b, n, d)
-        elif self.channel_adapter is not None:
+        # Channel embeddings: the spatial adapter replaces the channel-index embedding
+        if self.channel_adapter is not None:
             if ecog_xyz is None:
                 raise ValueError("channel_adapter is active but no ecog_xyz provided.")
             adapter_out = self.channel_adapter(ecog_xyz)  # (B, C, D)
             if adapter_out.ndim == 2:
                 adapter_out = adapter_out.unsqueeze(0)
             # Expand (B, C, D) → (B, N, D) by repeating over time
-            adapter_emb = adapter_out.unsqueeze(1).expand(-1, seq, -1, -1).reshape(b, n, d)
-            if self._channel_adapter_mode == "replace":
-                ch_emb = adapter_emb
-            else:  # additive
-                ch_emb = self.enc_channel(chan_idx_bn) + adapter_emb
+            ch_emb = adapter_out.unsqueeze(1).expand(-1, seq, -1, -1).reshape(b, n, d)
         else:
             ch_emb = self.enc_channel(chan_idx_bn)
         t_emb = self.enc_time(t_idx)
@@ -780,15 +578,7 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
         tok = torch.cat([cls, tok_lo], dim=1)     # [B, 1+N, D]
         tok = self.pos_drop(tok)
 
-        # 4a. Subject prompt tokens: prepend after CLS
-        _n_prompts = 0
-        if self.subject_prompts is not None and sid is not None:
-            K = self.num_prompt_tokens
-            prompt_flat = self.subject_prompts(sid)  # (B, K*D)
-            prompt_tokens = prompt_flat.reshape(b, K, self._prompt_dim)  # (B, K, D)
-            tok = torch.cat([tok[:, :1, :], prompt_tokens, tok[:, 1:, :]], dim=1)
-            _n_prompts = K
-        _prefix_len = 1 + _n_prompts  # CLS + prompts (used by merge step)
+        _prefix_len = 1  # CLS (used by the merge step)
 
         # layerwise_gate: per-layer gated residual injection of hi. One tiny
         # gate net (sees pooled initial lo+hi) emits `depth` scalars; at every
@@ -803,7 +593,7 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
             self._last_gate_mean = g.mean().item()
             self.last_aux["layerwise_gate_per_layer"] = g.mean(dim=0).detach()
             share = self.layerwise_gate_share_blocks
-            # hi only ever lands in the body region (after CLS+prompts), so
+            # hi only ever lands in the body region (after CLS), so
             # zero-pad the prefix rows once -> each block is a single
             # out-of-place add instead of slice+slice+cat (autograd-safe).
             H_pad = F.pad(H, (0, 0, _prefix_len, 0))     # [B, _prefix_len+N, D]
@@ -818,31 +608,19 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
         merge_k = self.merge_block_idx
 
         # 5. Early blocks
-        #    For hi_lora: early blocks have SwitchableLoRA injected.
-        #    Lo pass: LoRA disabled (pure frozen weights).
-        #    Hi pass: LoRA enabled (frozen + adapter).
-        if self.merge_strategy in ("hi_lora", "hi_lora_router") and tok_hi is not None:
-            tok_hi_ctx = torch.cat([cls, tok_hi], dim=1)
-            for blk in self.blocks[:merge_k]:
-                set_block_lora_enabled(blk, False)
-                tok = blk(tok)
-                set_block_lora_enabled(blk, True)
-                tok_hi_ctx = blk(tok_hi_ctx)
-            hi_processed = tok_hi_ctx[:, 1:, :]    # drop CLS
-        else:
-            for blk in self.blocks[:merge_k]:
-                tok = blk(tok)
-            hi_processed = tok_hi  # raw embeddings (may be None)
+        for blk in self.blocks[:merge_k]:
+            tok = blk(tok)
+        hi_processed = tok_hi  # raw embeddings (may be None)
 
         # 6. Merge hi into lo
         if hi_processed is not None:
-            lo_part = tok[:, _prefix_len:, :]      # [B, N, D] (skip CLS + prompts)
+            lo_part = tok[:, _prefix_len:, :]      # [B, N, D] (skip CLS)
             hi_part = hi_processed                 # [B, N, D]
             # "average": fixed 0.5/0.5 fusion at layer k
             merged = 0.5 * lo_part + 0.5 * hi_part
             tok = torch.cat([tok[:, :_prefix_len, :], merged], dim=1)
 
-        # 7. Late blocks (LoRA)
+        # 7. Late blocks
         for blk in self.blocks[merge_k:]:
             tok = blk(tok)
 
@@ -851,8 +629,8 @@ class HiLoCleanBackbone(timm.models.vision_transformer.VisionTransformer):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.forward_tokens(x)
 
-    def get_router_gate_mean(self) -> Optional[float]:
-        """Return the last mean gate value (for logging). None if not router strategy."""
+    def get_gate_mean(self) -> Optional[float]:
+        """Return the last mean layerwise gate (for logging). None unless layerwise_gate."""
         return self._last_gate_mean
 
 
@@ -865,20 +643,12 @@ class HiLoCleanRegressor(nn.Module):
         self,
         backbone: HiLoCleanBackbone,
         d_out: int = 5,
-        token_mode: TokenMode = "mean",
         include_cls: bool = True,
         head_dropout: float = 0.0,
-        head_hidden: int = 0,
     ):
         super().__init__()
         self.backbone = backbone
-        self.head = TokenRegressor(
-            d_out=d_out,
-            token_mode=token_mode,
-            include_cls=include_cls,
-            dropout=head_dropout,
-            head_hidden=head_hidden,
-        )
+        self.head = TokenRegressor(d_out=d_out, include_cls=include_cls, dropout=head_dropout)
 
     def forward(
         self,

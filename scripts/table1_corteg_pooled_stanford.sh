@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Table 1, "CORTEG (ours) Pooled" row, Finger (n=9): paper r = 0.554 ± 0.154.
 # checkpoints/corteg_stanford_pooled.pt is the adapter this recipe produced for the
-# paper, and it reproduces 0.554 at inference (see README.md).
+# paper, and it reproduces 0.554 at inference (see REPRODUCING.md).
 #
 # Hyperparameters: §4 of the paper.
 #
@@ -54,7 +54,6 @@ python -m experiments.run_regression_hilo_clean \
     --lora_targets "qkv,proj,fc1,fc2" \
     --channel_adapter knn_soft_fourier \
     --knn_k 8 \
-    --use_ecog_fuser \
     --hi_patch_size 25 \
     --hi_inject_last_n 4 \
     --merge_strategy average \
